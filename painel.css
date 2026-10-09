@@ -152,3 +152,54 @@ h3 { font-size: 14px; margin: 14px 0 8px; color: #3d4c54; }
   main { padding: 14px; }
   .duas { grid-template-columns: 1fr; }
 }
+
+/* ---------- cliente / WhatsApp / clientes ---------- */
+.btn.wpp { background: #25d366; border-color: #25d366; color: #fff; }
+.btn.wpp:hover { background: #1ebe5b; }
+.btn.wpp.grande { padding: 12px 18px; font-size: 15px; }
+.btn.wpp svg { flex: none; }
+.topo .btn.wpp { background: #25d366; border-color: #25d366; }
+.cards.tres { grid-template-columns: repeat(3, 1fr); }
+.plano { display: flex; align-items: center; gap: 14px; justify-content: space-between; flex-wrap: wrap; background: #fff; border: 1px solid var(--linha); border-radius: var(--raio); padding: 12px 16px; margin-bottom: 14px; font-size: 14px; }
+.plano > div { flex: 1 1 280px; display: grid; gap: 8px; }
+.plano.alerta { background: var(--alertaf); border-color: #f0d9a8; }
+.plano.erro { background: var(--errof); border-color: #ecc4be; }
+.barra-uso { height: 8px; background: var(--cinzaf); border-radius: 4px; overflow: hidden; }
+.barra-uso i { display: block; height: 100%; background: var(--cor); }
+.plano.alerta .barra-uso i { background: var(--alerta); } .plano.erro .barra-uso i { background: var(--erro); }
+.tag-dono { color: var(--cor2); font-weight: 600; }
+.info-lista { border: 1px solid var(--linha); border-radius: 10px; overflow: hidden; margin-bottom: 14px; font-size: 14px; }
+.info-lista div { display: flex; justify-content: space-between; gap: 12px; padding: 9px 12px; border-top: 1px solid var(--linha); align-items: center; }
+.info-lista div:first-child { border-top: 0; }
+.info-lista span { color: var(--suave); }
+.info-lista b { word-break: break-all; text-align: right; font-weight: 600; }
+.lista-clientes { border: 1px solid var(--linha); border-radius: 10px; overflow: hidden; }
+.cli { display: grid; grid-template-columns: minmax(0, 1fr) 70px 100px auto; gap: 10px; align-items: center; padding: 11px 12px; border-top: 1px solid var(--linha); cursor: pointer; }
+.cli:first-child { border-top: 0; }
+.cli:hover { background: #f8fafb; }
+.cli .nome { font-weight: 600; } .cli .sub { color: var(--suave); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cli .uso { font-weight: 700; font-size: 13px; }
+/* login */
+.marca-login { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--tinta); }
+.marca-login small { display: block; font-weight: 500; font-size: 12px; color: var(--suave); }
+.caixa-login h2 { margin: 4px 0 0; font-size: 19px; }
+.abas-login { display: grid; grid-template-columns: 1fr 1fr; background: var(--cinzaf); border-radius: 9px; padding: 3px; }
+.abas-login button { border: 0; background: transparent; padding: 8px; border-radius: 7px; font-weight: 600; color: var(--suave); cursor: pointer; }
+.abas-login button.ativa { background: #fff; color: var(--cor); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.link-login { justify-self: center; border: 0; background: none; color: var(--cor); cursor: pointer; text-decoration: underline; font-size: 13.5px; }
+.nota-login { font-size: 12.5px !important; }
+.caixa-login .erro-msg.ok { color: var(--ok); }
+.caixa-login .campo { margin-bottom: 0; }
+.tela-login.com-lado { grid-template-columns: minmax(0, 460px) minmax(0, 380px); gap: 48px; align-items: center; justify-content: center; }
+.apresenta { color: #e8f0f2; }
+.apresenta h1 { font-size: 34px; line-height: 1.15; margin: 0 0 14px; color: #fff; }
+.apresenta p { font-size: 16.5px; color: #c4d4da; margin: 0 0 16px; }
+.apresenta ul { margin: 0 0 24px; padding-left: 20px; color: #c4d4da; display: grid; gap: 6px; }
+@media (max-width: 860px) {
+  .tela-login.com-lado { grid-template-columns: 1fr; gap: 24px; align-content: start; padding-top: 28px; }
+  .apresenta h1 { font-size: 26px; }
+  .cards.tres { grid-template-columns: repeat(2, 1fr); }
+  .cards.tres .card:last-child { grid-column: span 2; }
+  .cli { grid-template-columns: minmax(0, 1fr) auto; }
+  .cli > :nth-child(3) { display: none; }
+}
