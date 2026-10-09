@@ -166,6 +166,8 @@ function dadosDemo() {
       const n = { user_id: null, ...c, id: uuid(), criado_em: new Date().toISOString() }; db.clientes.push(n); gravar(db); return structuredClone(n);
     },
     async apagarCliente(id) { db.clientes = db.clientes.filter(c => c.id !== id); db.links.forEach(l => { if (l.dono === id) l.dono = null; }); gravar(db); },
+    async config() { return { cadastro_aberto: true, limite_padrao: 5, dias_validade: null, ...(db.config || {}) }; },
+    async salvarConfig(c) { db.config = { ...c }; gravar(db); },
     async sair() { },
   };
 }
@@ -182,6 +184,7 @@ function dadosSupabase() {
     if (/Invalid login credentials/i.test(m)) return 'E-mail ou senha incorretos.';
     if (/Email not confirmed/i.test(m)) return 'Confirme seu e-mail primeiro: clique no link que enviamos (veja também o spam).';
     if (/User already registered/i.test(m)) return 'Esse e-mail já tem cadastro. Use "Entrar" ou "Esqueci a senha".';
+    if (/provider is not enabled|Unsupported provider/i.test(m)) return 'Login com Google ainda não foi ativado no Supabase (veja o LEIA-ME).';
     if (/Password should be|weak password/i.test(m)) return 'Senha fraca: use pelo menos 8 caracteres.';
     if (/rate limit|too many/i.test(m)) return 'Muitas tentativas. Espere alguns minutos e tente de novo.';
     if (/load failed|failed to fetch|networkerror/i.test(m)) return 'Sem conexão com o servidor. Confira a internet.';
@@ -201,7 +204,10 @@ function dadosSupabase() {
       return { email: data.session.user.email, cliente: ok(await sb.rpc('qr_vincular')) };
     },
     async entrar(email, senha) { ok(await sb.auth.signInWithPassword({ email, password: senha })); },
-    async cadastrar(email, senha) { const d = ok(await sb.auth.signUp({ email, password: senha, options: { emailRedirectTo: volta } })); return !!d.session; },
+    async cadastrar(email, senha, nome) { const d = ok(await sb.auth.signUp({ email, password: senha, options: { emailRedirectTo: volta, data: { nome } } })); return !!d.session; },
+    async entrarGoogle() { ok(await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: volta } })); },
+    async config() { return ok(await sb.from('qr_config').select('*').eq('id', 1).maybeSingle()) || { cadastro_aberto: true, limite_padrao: 5, dias_validade: null }; },
+    async salvarConfig(c) { ok(await sb.from('qr_config').upsert({ id: 1, cadastro_aberto: !!c.cadastro_aberto, limite_padrao: c.limite_padrao, dias_validade: c.dias_validade || null })); },
     async esqueci(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: volta })); },
     async novaSenha(senha) { ok(await sb.auth.updateUser({ password: senha })); },
     aoRecuperar(f) { sb.auth.onAuthStateChange(ev => { if (ev === 'PASSWORD_RECOVERY') f(); }); },
@@ -256,7 +262,8 @@ async function iniciar() {
     return montarPainel(s);
   }
   const c = s.cliente || {};
-  if (c.status === 'sem_cadastro') return telaAviso('Seu acesso ainda não foi liberado', `O e-mail ${s.email} ainda não está cadastrado como cliente. Fale com a gente pelo WhatsApp que liberamos rapidinho.`);
+  if (c.status === 'sem_confirmar') return telaAviso('Confirme seu e-mail', `Enviamos um link de confirmação pra ${s.email}. Clique nele (veja também o spam) e entre de novo.`);
+  if (c.status === 'sem_cadastro') return telaAviso('Cadastros fechados no momento', `Não conseguimos criar sua conta (${s.email}) agora. Fale com a gente pelo WhatsApp que liberamos rapidinho.`);
   if (c.status === 'bloqueado') return telaAviso('Conta bloqueada', 'Seu acesso está pausado no momento. Fale com a gente pelo WhatsApp.');
   EU = c;
   montarPainel(s);
@@ -275,6 +282,11 @@ function telaLogin(msg = '', modo = 'entrar') {
   const email = h('input', { type: 'email', autocomplete: 'username', required: true });
   const senha = h('input', { type: 'password', autocomplete: modo === 'criar' ? 'new-password' : 'current-password', minlength: 8 });
   const senha2 = h('input', { type: 'password', autocomplete: 'new-password', minlength: 8 });
+  const nomeC = h('input', { autocomplete: 'organization', placeholder: 'Nome da empresa ou seu nome', maxlength: 120 });
+  const lNome = campo('Nome / empresa', nomeC);
+  const google = ADMIN ? null : h('button', { class: 'btn btn-google', type: 'button', onclick: async () => { erro.textContent = ''; try { await D.entrarGoogle(); } catch (x) { erro.textContent = x.message; } } });
+  if (google) { google.innerHTML = '<svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.2-.1-2.3-.4-3.5z"/></svg>'; google.append(h('span', { text: 'Continuar com o Google' })); }
+  const ou = ADMIN ? null : h('div', { class: 'ou' }, h('span', { text: 'ou com e-mail' }));
   const erro = h('p', { class: 'erro-msg', text: msg });
   const btn = h('button', { class: 'btn primario', type: 'submit' });
   const titulo = h('h2');
@@ -285,14 +297,15 @@ function telaLogin(msg = '', modo = 'entrar') {
     modo = m; erro.textContent = ''; erro.className = 'erro-msg';
     abas.hidden = ADMIN || m === 'esqueci' || m === 'nova';
     abas.querySelectorAll('button').forEach(b => b.classList.toggle('ativa', b.dataset.m === m));
-    titulo.textContent = { entrar: 'Entrar', criar: 'Primeiro acesso', esqueci: 'Recuperar senha', nova: 'Criar nova senha' }[m];
-    btn.textContent = { entrar: 'Entrar', criar: 'Criar minha senha', esqueci: 'Enviar link por e-mail', nova: 'Salvar nova senha' }[m];
-    lEmail.hidden = m === 'nova'; lSenha.hidden = m === 'esqueci'; lSenha2.hidden = !(m === 'criar' || m === 'nova');
+    titulo.textContent = { entrar: 'Entrar', criar: 'Criar conta', esqueci: 'Recuperar senha', nova: 'Criar nova senha' }[m];
+    btn.textContent = { entrar: 'Entrar', criar: 'Criar conta', esqueci: 'Enviar link por e-mail', nova: 'Salvar nova senha' }[m];
+    lEmail.hidden = m === 'nova'; lSenha.hidden = m === 'esqueci'; lSenha2.hidden = !(m === 'criar' || m === 'nova'); lNome.hidden = m !== 'criar';
+    if (google) google.hidden = ou.hidden = m === 'esqueci' || m === 'nova';
     esqueci.hidden = ADMIN && m !== 'entrar' ? true : m === 'nova';
     esqueci.textContent = m === 'esqueci' ? '← Voltar' : 'Esqueci a senha';
     senha.autocomplete = m === 'entrar' ? 'current-password' : 'new-password';
   };
-  for (const [m, t] of [['entrar', 'Entrar'], ['criar', 'Primeiro acesso']]) abas.append(h('button', { type: 'button', 'data-m': m, text: t, onclick: () => mudar(m) }));
+  for (const [m, t] of [['entrar', 'Entrar'], ['criar', 'Criar conta']]) abas.append(h('button', { type: 'button', 'data-m': m, text: t, onclick: () => mudar(m) }));
   esqueci.onclick = () => mudar(modo === 'esqueci' ? 'entrar' : 'esqueci');
   const okMsg = t => { erro.className = 'erro-msg ok'; erro.textContent = t; };
   const f = h('form', { class: 'caixa-login', novalidate: true, onsubmit: async e => {
@@ -304,15 +317,19 @@ function telaLogin(msg = '', modo = 'entrar') {
     btn.disabled = true;
     try {
       if (modo === 'entrar') { await D.entrar(em, senha.value); await iniciar(); }
-      else if (modo === 'criar') { const logado = await D.cadastrar(em, senha.value); if (logado) await iniciar(); else okMsg('Pronto! Enviamos um e-mail de confirmação. Clique no link do e-mail (veja também o spam) e depois entre aqui.'); }
+      else if (modo === 'criar') {
+        if (!nomeC.value.trim()) { erro.textContent = 'Digite o nome da empresa ou o seu nome.'; return; }
+        const logado = await D.cadastrar(em, senha.value, nomeC.value.trim());
+        if (logado) await iniciar(); else okMsg('Pronto! Enviamos um e-mail de confirmação. Clique no link do e-mail (veja também o spam) e depois entre aqui.');
+      }
       else if (modo === 'esqueci') { await D.esqueci(em); okMsg('Se esse e-mail tiver cadastro, enviamos um link pra criar uma senha nova.'); }
       else { await D.novaSenha(senha.value); history.replaceState(null, '', location.pathname); aviso('Senha alterada!'); await iniciar(); }
     } catch (x) { erro.textContent = x.message; }
     finally { btn.disabled = false; }
   } },
   h('div', { class: 'marca-login' }, logoQR(), h('div', {}, ADMIN ? 'QR Dinâmico · Admin' : 'Meus QR Codes', h('small', { text: MARCA }))),
-  abas, titulo, lEmail, lSenha, lSenha2, erro, btn, esqueci,
-  ADMIN ? null : h('p', { class: 'nota-login', text: 'Primeiro acesso: use o mesmo e-mail que você passou pra gente e crie sua senha.' }));
+  abas, titulo, google, ou, lNome, lEmail, lSenha, lSenha2, erro, btn, esqueci,
+  ADMIN ? null : h('p', { class: 'nota-login', text: 'Ao criar a conta você já entra e pode gerar seus QR Codes.' }));
   const lado = ADMIN ? null : h('section', { class: 'apresenta' },
     h('h1', { text: 'QR Code dinâmico pra sua empresa' }),
     h('p', { text: 'Placas e adesivos com QR Code que você mesmo atualiza: troque o link quando quiser, sem reimprimir, e acompanhe quantas pessoas escanearam.' }),
@@ -703,8 +720,8 @@ function abrirClientes() {
   const corpo = h('div', { class: 'lat-corpo' }), rodape = h('div', { class: 'lat-rodape' }), titulo = h('h2', { text: 'Clientes' });
   const lista = () => {
     titulo.textContent = `Clientes (${CLIENTES.length})`;
-    rep(rodape, h('button', { class: 'btn primario', text: '+ Novo cliente', onclick: () => form(null) }));
-    if (!CLIENTES.length) return rep(corpo, h('div', { class: 'vazio', text: 'Nenhum cliente ainda. Cadastre um: ele entra na página principal do site com o e-mail cadastrado e cria a senha em "Primeiro acesso".' }));
+    rep(rodape, h('button', { class: 'btn primario', text: '+ Novo cliente', onclick: () => form(null) }), h('button', { class: 'btn', text: 'Cadastro pelo site…', onclick: configCadastro }));
+    if (!CLIENTES.length) return rep(corpo, h('div', { class: 'vazio', text: 'Nenhum cliente ainda. Eles aparecem aqui quando criam conta na página principal, ou cadastre um aqui.' }));
     rep(corpo, h('div', { class: 'lista-clientes' }, ...CLIENTES.map(c => {
       const [t, cls] = situacaoCliente(c), usados = LINKS.filter(l => l.dono === c.id).length;
       return h('div', { class: 'cli', onclick: () => form(c) },
@@ -730,7 +747,7 @@ function abrirClientes() {
     rep(corpo,
       h('button', { class: 'btn mini', text: '← Voltar à lista', onclick: lista, style: 'margin-bottom:14px' }),
       !novo ? h('div', { class: 'caixa-info' }, `Usa ${usados} de ${c.limite} QR Codes. `, c.user_id ? 'Já fez o primeiro acesso.' : 'Ainda não fez o primeiro acesso.') : null,
-      campo('Nome *', nome), campo('E-mail de acesso *', email, c.user_id ? 'Já vinculado ao login do cliente (não dá pra trocar aqui).' : 'O cliente entra na página principal com esse e-mail e cria a senha em "Primeiro acesso".'),
+      campo('Nome *', nome), campo('E-mail de acesso *', email, c.user_id ? 'Já vinculado ao login do cliente (não dá pra trocar aqui).' : 'O cliente entra na página principal com esse e-mail (Google ou "Criar conta") e já cai na conta dele.'),
       h('div', { class: 'duas' }, campo('Telefone / WhatsApp', tel), campo('Limite de QR Codes', limite)),
       campo('Plano válido até', validade, 'Depois dessa data os QRs dele param e ele não consegue editar. Vazio = sem validade.'),
       h('div', { class: 'rapidos', style: 'margin:-6px 0 14px' }, ...[['+1 mês', () => somaMeses(base(), 1)], ['+6 meses', () => somaMeses(base(), 6)], ['+1 ano', () => somaMeses(base(), 12)], ['Sem validade', () => '']]
@@ -748,7 +765,7 @@ function abrirClientes() {
     } });
     rep(rodape, salvar);
     if (!novo) {
-      const convite = `Olá, ${c.nome}! Seu acesso aos QR Codes da ${MARCA} está liberado.\n\n1. Acesse ${URL_CLIENTE()}\n2. Clique em "Primeiro acesso"\n3. Use o e-mail ${c.email} e crie sua senha\n4. Confirme pelo link que chega no seu e-mail\n\nPor lá você cria seus QR Codes (até ${c.limite}), troca o link quando quiser e vê quantas pessoas escanearam.`;
+      const convite = `Olá, ${c.nome}! Seu acesso aos QR Codes da ${MARCA} está liberado.\n\n1. Acesse ${URL_CLIENTE()}\n2. Clique em "Continuar com o Google" (se ${c.email} for Gmail) ou em "Criar conta" com o e-mail ${c.email}\n\nPor lá você cria seus QR Codes (até ${c.limite}), troca o link quando quiser e vê quantas pessoas escanearam.`;
       add(rodape,
         h('button', { class: 'btn', text: 'Copiar convite', title: 'Texto pronto pra mandar pro cliente', onclick: () => copiar(convite) }),
         c.telefone ? h('a', { class: 'btn wpp', href: `https://wa.me/${(() => { const n = c.telefone.replace(/\D/g, ''); return n.length <= 11 ? '55' + n : n; })()}?text=${encodeURIComponent(convite)}`, target: '_blank', rel: 'noopener', text: 'Enviar convite' }) : null,
@@ -760,6 +777,22 @@ function abrirClientes() {
         } }));
     }
     nome.focus();
+  };
+  const configCadastro = async () => {
+    titulo.textContent = 'Cadastro pelo site';
+    let cfg; try { cfg = await D.config(); } catch (e) { return aviso(e.message, true); }
+    const aberto = h('input', { type: 'checkbox', checked: !!cfg.cadastro_aberto });
+    const lim = h('input', { type: 'number', min: 0, max: 1000, value: cfg.limite_padrao });
+    const dias = h('input', { type: 'number', min: 1, max: 3650, value: cfg.dias_validade || '', placeholder: 'vazio = sem validade' });
+    rep(corpo,
+      h('button', { class: 'btn mini', text: '← Voltar à lista', onclick: lista, style: 'margin-bottom:14px' }),
+      h('div', { class: 'caixa-info', text: 'Quem cria conta na página principal (e-mail ou Google) vira cliente na hora com estas regras. Depois você ajusta cada cliente na lista (limite, validade, bloquear).' }),
+      h('label', { class: 'chave' }, aberto, 'Cadastro aberto (desmarque pra ninguém novo conseguir criar conta)'),
+      h('div', { class: 'duas' }, campo('Limite de QR Codes pra contas novas', lim), campo('Dias de validade pra contas novas', dias, 'Ex.: 30 = teste de 30 dias. Vazio = sem validade.')));
+    rep(rodape, h('button', { class: 'btn primario', text: 'Salvar', onclick: async () => {
+      try { await D.salvarConfig({ cadastro_aberto: aberto.checked, limite_padrao: Math.max(0, Math.min(1000, +lim.value | 0)), dias_validade: dias.value ? Math.max(1, Math.min(3650, +dias.value | 0)) : null }); aviso('Salvo!'); lista(); }
+      catch (e) { aviso(e.message, true); }
+    } }));
   };
   veu.append(h('aside', { class: 'lateral' }, h('div', { class: 'lat-topo', style: 'padding-bottom:14px;border-bottom:1px solid var(--linha)' }, titulo, h('button', { class: 'fechar', text: '×', onclick: fechar })), corpo, rodape));
   document.body.append(veu);

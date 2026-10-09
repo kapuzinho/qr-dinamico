@@ -203,3 +203,7 @@ h3 { font-size: 14px; margin: 14px 0 8px; color: #3d4c54; }
   .cli { grid-template-columns: minmax(0, 1fr) auto; }
   .cli > :nth-child(3) { display: none; }
 }
+.btn-google { background: #fff; border: 1px solid #cfd8dc; color: var(--texto); padding: 10px; }
+.btn-google:hover { background: #f6f8f9; }
+.ou { display: flex; align-items: center; gap: 8px; color: #8a979d; font-size: 12.5px; }
+.ou::before, .ou::after { content: ''; flex: 1; height: 1px; background: #dde4e7; }

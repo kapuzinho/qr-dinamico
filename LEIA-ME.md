@@ -24,10 +24,12 @@ escolheu no painel**. Você troca o destino, pausa ou coloca validade quando qui
 Validade do plano do cliente: depois da data, todos os QRs dele param (mostram "QR expirou") e ele não consegue editar.
 Desmarcar **Ativo** no cliente bloqueia o acesso e pausa os QRs dele na hora.
 
-### Como liberar um cliente
-1. `/admin` → **Clientes → + Novo cliente**: nome, e-mail, WhatsApp, limite (ex.: 5) e validade → **Cadastrar**.
-2. **Enviar convite** (abre o WhatsApp dele com o passo a passo) ou **Copiar convite**.
-3. O cliente abre o site → **Primeiro acesso** → mesmo e-mail + senha → confirma pelo e-mail → entra.
+### Como o cliente entra
+- **Sozinho:** abre o site → **Continuar com o Google** ou **Criar conta** (nome, e-mail, senha) → já entra.
+  A conta dele é criada na hora com as regras de **/admin → Clientes → Cadastro pelo site…**
+  (cadastro aberto/fechado, limite padrão, dias de validade padrão — ex.: 30 dias de teste).
+- **Cadastrado por você:** `/admin` → **Clientes → + Novo cliente** (nome, e-mail, limite, validade) →
+  **Enviar convite**. Quando ele entrar com esse e-mail (Google ou criar conta), cai direto na conta que você montou.
 
 ## Testar agora (sem instalar nada)
 
@@ -41,8 +43,9 @@ eles abrem em **modo demonstração**, com dados de exemplo salvos só no seu na
 1. Em https://supabase.com → **New project**. Recomendo um projeto **separado** do GestorPrint, por exemplo
    `qr-dinamico` (o plano grátis permite 2). Região: São Paulo.
 2. **SQL Editor → New query** → cole todo o `supabase/schema.sql` → **Run**.
-3. **Authentication → Sign In / Providers**: deixe **Allow new users to sign up** LIGADO e **Confirm email** LIGADO
-   (o cliente cria a senha no "Primeiro acesso"; quem não estiver cadastrado por você entra mas não vê nada).
+3. **Authentication → Sign In / Providers → Email**: deixe **Allow new users to sign up** LIGADO e **Confirm email**
+   DESLIGADO (assim quem cria conta já entra direto, sem esperar e-mail).
+   Se preferir confirmar o e-mail, deixe ligado: o cliente recebe um link e entra depois de clicar.
    **Authentication → URL Configuration**: em **Site URL** coloque o endereço do site (ex.: `https://kpu-nine.vercel.app`
    ou seu domínio) e em **Redirect URLs** adicione `https://SEU-ENDERECO/**`. É pra onde vão os links de confirmação e de "esqueci a senha".
 4. **Authentication → Users → Add user → Create new user**: seu e-mail e senha, com **Auto Confirm User** marcado.
@@ -110,3 +113,13 @@ Crie um repositório novo (ex.: `qr-dinamico`) e suba **todos** os arquivos dest
 > E-mails (confirmação e "esqueci a senha"): o envio que vem pronto no Supabase manda poucos por hora.
 > Se tiver muitos clientes entrando no mesmo dia, configure um SMTP grátis (Brevo/Resend) em
 > Authentication → Emails → SMTP Settings.
+
+## Login com Google (opcional, recomendado)
+1. https://console.cloud.google.com → o mesmo projeto que você usou no GestorPrint (ou um novo) →
+   **APIs e serviços → Credenciais** → abra o seu **ID do cliente OAuth** (tipo "Aplicativo da Web").
+2. Em **URIs de redirecionamento autorizados** → **Adicionar URI**:
+   `https://SEU-PROJETO.supabase.co/auth/v1/callback`
+   (o endereço do Supabase do QR Dinâmico — o mesmo da `SUPABASE_URL`) → **Salvar**.
+3. Supabase do QR Dinâmico → **Authentication → Sign In / Providers → Google** → ligue, cole o
+   **Client ID** e o **Client Secret** do Google → **Save**.
+4. Confira **Authentication → URL Configuration** (Site URL e Redirect URLs com o endereço do site).

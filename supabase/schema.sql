@@ -154,24 +154,50 @@ end $$;
 drop trigger if exists qr_links_regras on public.qr_links;
 create trigger qr_links_regras before insert or update on public.qr_links for each row execute function public.qr_regras_cliente();
 
--- chamada pela página do cliente depois do login: liga o login ao cadastro (pelo e-mail confirmado)
+-- configurações do cadastro (uma linha só): cadastro aberto? limite e validade padrão de quem se cadastra sozinho
+create table if not exists public.qr_config (
+  id                 integer primary key default 1 check (id = 1),
+  cadastro_aberto    boolean not null default true,
+  limite_padrao      integer not null default 5 check (limite_padrao between 0 and 1000),
+  dias_validade      integer check (dias_validade is null or dias_validade between 1 and 3650)  -- vazio = sem validade
+);
+insert into public.qr_config (id) values (1) on conflict do nothing;
+alter table public.qr_config enable row level security;
+drop policy if exists "admins config" on public.qr_config;
+create policy "admins config" on public.qr_config for all using (public.qr_eh_admin()) with check (public.qr_eh_admin());
+
+-- chamada pela página do cliente depois do login:
+--  1) se você já cadastrou esse e-mail no admin, liga o login ao cadastro;
+--  2) senão, e se o cadastro estiver aberto, cria a conta do cliente na hora (limite/validade padrão).
 create or replace function public.qr_vincular() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
-  e text; conf timestamptz; c public.qr_clientes;
+  e text; conf timestamptz; meta jsonb; c public.qr_clientes; cfg public.qr_config;
 begin
   if auth.uid() is null then return jsonb_build_object('status', 'sem_login'); end if;
-  select lower(email), email_confirmed_at into e, conf from auth.users where id = auth.uid();
+  select lower(email), email_confirmed_at, coalesce(raw_user_meta_data, '{}'::jsonb) into e, conf, meta from auth.users where id = auth.uid();
   select * into c from public.qr_clientes where user_id = auth.uid();
   if not found and conf is not null then
     update public.qr_clientes set user_id = auth.uid() where email = e and user_id is null returning * into c;
   end if;
-  if c.id is null then return jsonb_build_object('status', 'sem_cadastro', 'email', e); end if;
+  if c.id is null and conf is not null and not exists (select 1 from public.qr_admins where user_id = auth.uid()) then
+    select * into cfg from public.qr_config where id = 1;
+    if coalesce(cfg.cadastro_aberto, true) and not exists (select 1 from public.qr_clientes where email = e) then
+      insert into public.qr_clientes (user_id, nome, email, limite, validade, observacao)
+      values (auth.uid(),
+              left(coalesce(nullif(trim(meta->>'nome'), ''), nullif(trim(meta->>'full_name'), ''), nullif(trim(meta->>'name'), ''), split_part(e, '@', 1)), 120),
+              e, coalesce(cfg.limite_padrao, 5),
+              case when cfg.dias_validade is null then null else (now() at time zone 'America/Sao_Paulo')::date + cfg.dias_validade end,
+              'Cadastro feito pelo site')
+      returning * into c;
+    end if;
+  end if;
+  if c.id is null then return jsonb_build_object('status', case when conf is null then 'sem_confirmar' else 'sem_cadastro' end, 'email', e); end if;
   return jsonb_build_object(
     'status', case when not c.ativo then 'bloqueado'
                    when c.validade is not null and c.validade < (now() at time zone 'America/Sao_Paulo')::date then 'vencido'
                    else 'ok' end,
-    'id', c.id, 'nome', c.nome, 'limite', c.limite, 'validade', c.validade,
+    'id', c.id, 'nome', c.nome, 'limite', c.limite, 'validade', c.validade, 'ativo', c.ativo,
     'usados', (select count(*) from public.qr_links where dono = c.id));
 end $$;
 revoke all on function public.qr_vincular() from public;
