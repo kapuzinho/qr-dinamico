@@ -3,13 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="robots" content="noindex, nofollow" />
-  <title>Admin — Kapuzinho 3D</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&display=swap" rel="stylesheet" />
+  <meta name="robots" content="noindex" />
+  <title>QR Dinâmico · Admin</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f7c80'/%3E%3Cpath fill='%23fff' d='M7 7h8v8H7zm2 2v4h4V9zm8-2h8v8h-8zm2 2v4h4V9zM7 17h8v8H7zm2 2v4h4v-4zm9-2h2v2h-2zm4 0h3v3h-3zm-4 4h3v4h-3zm5 2h2v2h-2z'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="painel.css" />
+  <script src="config.js"></script>
+  <script>window.QR_MODO = 'admin';</script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
-  <div id="admin"></div>
-  <script type="module" src="/src/admin.js"></script>
+  <div id="app"></div>
+  <script src="pix-lib.js"></script>
+  <script src="painel.js"></script>
 </body>
 </html>

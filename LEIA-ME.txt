@@ -1,4 +1,0 @@
-Kapuzinho 3D - Ferramentas STL
-Node 20+. Apague a pasta antiga e ponha esta.
-1. npm install
-2. npm run dev
