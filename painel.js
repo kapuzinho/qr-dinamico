@@ -130,11 +130,27 @@ function dadosDemo() {
     });
     db = { links, cliques, clientes }; gravar(db);
   }
-  const eu = () => db.clientes.find(c => c.id === 'cli-pizza');        // no modo demo, a página do cliente é a Pizzaria Bella
+  const eu = () => db.clientes.find(c => c.id === 'cli-pizza');
+  const pixDb = () => {
+    if (!db.pix) {
+      const agora = Date.now(), k1 = uuid(), k2 = uuid(), l1 = uuid();
+      db.pix = {
+        chaves: [{ id: k1, dono: 'cli-pizza', tipo: 'email', chave: 'financeiro@pizzariabella.com', nome: 'PIZZARIA BELLA LTDA', cidade: 'BRASILIA', apelido: 'E-mail da loja', criado_em: new Date(agora - 20 * 864e5).toISOString() },
+          { id: k2, dono: null, tipo: 'telefone', chave: '+5561920069782', nome: 'KAPUZINHO 3D', cidade: 'BRASILIA', apelido: 'Meu celular', criado_em: new Date(agora - 30 * 864e5).toISOString() }],
+        links: [{ id: l1, slug: 'pizzaria-bella', dono: 'cli-pizza', chave_id: k1, titulo: 'Pague sua pizza', valor: null, descricao: '', ativo: true, acessos: 0, ultimo_acesso: null, criado_em: new Date(agora - 20 * 864e5).toISOString() },
+          { id: uuid(), slug: 'kapuzinho', dono: null, chave_id: k2, titulo: 'Kapuzinho 3D', valor: null, descricao: '', ativo: true, acessos: 0, ultimo_acesso: null, criado_em: new Date(agora - 30 * 864e5).toISOString() }],
+        acessos: [],
+      };
+      for (let i = 0; i < 70; i++) { const em = new Date(agora - Math.random() * 25 * 864e5).toISOString(); db.pix.acessos.push({ link_id: l1, em, dispositivo: i % 4 ? 'celular' : 'computador', sistema: i % 3 ? 'Android' : 'iPhone/iPad', cidade: ['Brasília', 'Guará', 'Taguatinga'][i % 3] }); db.pix.links[0].acessos++; }
+      db.clientes.forEach(c => { if (c.limite_pix == null) c.limite_pix = 10; });
+      gravar(db);
+    }
+    return db.pix;
+  };        // no modo demo, a página do cliente é a Pizzaria Bella
   const meus = () => (ADMIN ? db.links : db.links.filter(l => l.dono === 'cli-pizza'));
   const planoOk = () => { const c = eu(); if (!c.ativo) throw new Error('Sua conta está bloqueada. Fale com a gente.'); if (c.validade && c.validade < hoje()) throw new Error(`Seu plano venceu em ${dataBR(c.validade)}. Fale com a gente pra renovar.`); };
   return {
-    async sessao() { return ADMIN ? { email: 'demonstração', admin: true } : { email: eu().email, cliente: { status: 'ok', ...eu(), usados: meus().length } }; },
+    async sessao() { return ADMIN ? { email: 'demonstração', admin: true } : { email: eu().email, cliente: { status: 'ok', limite_pix: 10, ...eu(), usados: meus().length } }; },
     async listar() { return structuredClone(meus()); },
     async salvar(l) {
       if (!/^[a-z0-9_-]{3,32}$/.test(l.codigo)) throw new Error('Código inválido.');
@@ -166,8 +182,33 @@ function dadosDemo() {
       const n = { user_id: null, ...c, id: uuid(), criado_em: new Date().toISOString() }; db.clientes.push(n); gravar(db); return structuredClone(n);
     },
     async apagarCliente(id) { db.clientes = db.clientes.filter(c => c.id !== id); db.links.forEach(l => { if (l.dono === id) l.dono = null; }); gravar(db); },
-    async config() { return { cadastro_aberto: true, limite_padrao: 5, dias_validade: null, ...(db.config || {}) }; },
+    async config() { return { cadastro_aberto: true, limite_padrao: 5, limite_pix_padrao: 10, dias_validade: null, ...(db.config || {}) }; },
     async salvarConfig(c) { db.config = { ...c }; gravar(db); },
+    // ---- Pix (demo) ----
+    async pixChaves() { const px = pixDb(); return structuredClone(ADMIN ? px.chaves : px.chaves.filter(k => k.dono === 'cli-pizza')); },
+    async salvarChave(k) {
+      const px = pixDb();
+      if (!ADMIN) { planoOk(); if (!k.id && px.chaves.filter(x => x.dono === 'cli-pizza').length >= Math.max(1, eu().limite_pix ?? 10)) throw new Error('Limite de chaves Pix atingido.'); k = { ...k, dono: 'cli-pizza' }; }
+      if (k.id) { const i = px.chaves.findIndex(x => x.id === k.id); px.chaves[i] = { ...px.chaves[i], ...k }; gravar(db); return structuredClone(px.chaves[i]); }
+      const n = { ...k, id: uuid(), criado_em: new Date().toISOString() }; px.chaves.push(n); gravar(db); return structuredClone(n);
+    },
+    async apagarChave(id) { const px = pixDb(); if (px.links.some(l => l.chave_id === id)) throw new Error('Essa chave está em uso num link Pix. Troque a chave do link ou apague o link antes.'); px.chaves = px.chaves.filter(k => k.id !== id); gravar(db); },
+    async pixLinks() { const px = pixDb(); return structuredClone(ADMIN ? px.links : px.links.filter(k => k.dono === 'cli-pizza')); },
+    async slugLivre(slug, id) { return !pixDb().links.some(l => l.slug === slug && l.id !== id); },
+    async salvarPixLink(l) {
+      const px = pixDb();
+      if (px.links.some(x => x.slug === l.slug && x.id !== l.id)) throw new Error('Esse endereço já está em uso. Escolha outro.');
+      if (!ADMIN) {
+        planoOk(); if (!px.chaves.some(k => k.id === l.chave_id && k.dono === 'cli-pizza')) throw new Error('Escolha uma das suas chaves Pix.');
+        if (!l.id && px.links.filter(x => x.dono === 'cli-pizza').length >= (eu().limite_pix ?? 10)) throw new Error(`Limite de ${eu().limite_pix ?? 10} links Pix atingido. Fale com a gente pra aumentar.`);
+        l = { ...l, dono: 'cli-pizza' };
+      }
+      if (l.id) { const i = px.links.findIndex(x => x.id === l.id); px.links[i] = { ...px.links[i], ...l, acessos: px.links[i].acessos }; gravar(db); return structuredClone(px.links[i]); }
+      const n = { ...l, id: uuid(), acessos: 0, ultimo_acesso: null, criado_em: new Date().toISOString() }; px.links.push(n); gravar(db); return structuredClone(n);
+    },
+    async apagarPixLink(id) { const px = pixDb(); px.links = px.links.filter(l => l.id !== id); px.acessos = px.acessos.filter(a => a.link_id !== id); gravar(db); },
+    async pixAcessos(id, dias) { const px = pixDb(), d = Date.now() - dias * 864e5, ids = new Set((ADMIN ? px.links : px.links.filter(l => l.dono === 'cli-pizza')).map(l => l.id)); return px.acessos.filter(a => ids.has(a.link_id) && (!id || a.link_id === id) && new Date(a.em) >= d).sort((a, b) => b.em.localeCompare(a.em)); },
+    async simularPix(l) { const px = pixDb(); px.acessos.push({ link_id: l.id, em: new Date().toISOString(), dispositivo: 'celular', sistema: 'Android', cidade: 'Brasília' }); const x = px.links.find(y => y.id === l.id); x.acessos++; x.ultimo_acesso = new Date().toISOString(); gravar(db); },
     async sair() { },
   };
 }
@@ -206,8 +247,8 @@ function dadosSupabase() {
     async entrar(email, senha) { ok(await sb.auth.signInWithPassword({ email, password: senha })); },
     async cadastrar(email, senha, nome) { const d = ok(await sb.auth.signUp({ email, password: senha, options: { emailRedirectTo: volta, data: { nome } } })); return !!d.session; },
     async entrarGoogle() { ok(await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: volta } })); },
-    async config() { return ok(await sb.from('qr_config').select('*').eq('id', 1).maybeSingle()) || { cadastro_aberto: true, limite_padrao: 5, dias_validade: null }; },
-    async salvarConfig(c) { ok(await sb.from('qr_config').upsert({ id: 1, cadastro_aberto: !!c.cadastro_aberto, limite_padrao: c.limite_padrao, dias_validade: c.dias_validade || null })); },
+    async config() { return ok(await sb.from('qr_config').select('*').eq('id', 1).maybeSingle()) || { cadastro_aberto: true, limite_padrao: 5, limite_pix_padrao: 10, dias_validade: null }; },
+    async salvarConfig(c) { ok(await sb.from('qr_config').upsert({ id: 1, cadastro_aberto: !!c.cadastro_aberto, limite_padrao: c.limite_padrao, limite_pix_padrao: c.limite_pix_padrao ?? 10, dias_validade: c.dias_validade || null })); },
     async esqueci(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: volta })); },
     async novaSenha(senha) { ok(await sb.auth.updateUser({ password: senha })); },
     aoRecuperar(f) { sb.auth.onAuthStateChange(ev => { if (ev === 'PASSWORD_RECOVERY') f(); }); },
@@ -238,9 +279,37 @@ function dadosSupabase() {
       }
       return todos;
     },
+    async pixChaves() { return ok(await sb.from('pix_chaves').select('*').order('criado_em')); },
+    async salvarChave(k) {
+      const d = { tipo: k.tipo, chave: k.chave, nome: k.nome, cidade: k.cidade, apelido: k.apelido || null };
+      if (ADMIN) d.dono = k.dono || null;
+      if (k.id) return ok(await sb.from('pix_chaves').update(d).eq('id', k.id).select().single());
+      return ok(await sb.from('pix_chaves').insert(d).select().single());
+    },
+    async apagarChave(id) { const r = await sb.from('pix_chaves').delete().eq('id', id); if (r.error && /foreign key|pix_links_chave_id_fkey/i.test(r.error.message)) throw new Error('Essa chave está em uso num link Pix. Troque a chave do link ou apague o link antes.'); ok(r); },
+    async pixLinks() { return ok(await sb.from('pix_links').select('*').order('criado_em', { ascending: false })); },
+    async slugLivre(slug, id) { if (id) { const r = ok(await sb.from('pix_links').select('id').eq('slug', slug)); if (r.some(x => x.id === id)) return true; } return ok(await sb.rpc('pix_slug_livre', { p_slug: slug })); },
+    async salvarPixLink(l) {
+      const d = { slug: l.slug, chave_id: l.chave_id, titulo: l.titulo || null, valor: l.valor || null, descricao: l.descricao || null, ativo: !!l.ativo };
+      if (ADMIN) d.dono = l.dono || null;
+      try {
+        if (l.id) return ok(await sb.from('pix_links').update(d).eq('id', l.id).select().single());
+        return ok(await sb.from('pix_links').insert(d).select().single());
+      } catch (e) { if (/duplicate|pix_links_slug_key/i.test(e.message)) throw new Error('Esse endereço já está em uso. Escolha outro.'); throw e; }
+    },
+    async apagarPixLink(id) { ok(await sb.from('pix_links').delete().eq('id', id)); },
+    async pixAcessos(id, dias) {
+      const desde = new Date(Date.now() - dias * 864e5).toISOString(), todos = []; let de = 0;
+      for (;;) {
+        let q = sb.from('pix_acessos').select('link_id,em,dispositivo,sistema,cidade').gte('em', desde).order('em', { ascending: false }).range(de, de + 999);
+        if (id) q = q.eq('link_id', id);
+        const d = ok(await q); todos.push(...d); if (d.length < 1000 || todos.length >= 20000) break; de += 1000;
+      }
+      return todos;
+    },
     async clientes() { return ok(await sb.from('qr_clientes').select('*').order('nome')); },
     async salvarCliente(c) {
-      const d = { nome: c.nome, email: c.email, telefone: c.telefone || null, limite: c.limite, validade: c.validade || null, ativo: !!c.ativo, observacao: c.observacao || null };
+      const d = { nome: c.nome, email: c.email, telefone: c.telefone || null, limite: c.limite, limite_pix: c.limite_pix ?? 10, validade: c.validade || null, ativo: !!c.ativo, observacao: c.observacao || null };
       if (c.id) return ok(await sb.from('qr_clientes').update(d).eq('id', c.id).select().single());
       return ok(await sb.from('qr_clientes').insert(d).select().single());
     },
@@ -343,12 +412,12 @@ function telaLogin(msg = '', modo = 'entrar') {
 function montarPainel(sessao) {
   app.innerHTML = '';
   const acoes = ADMIN ? [
-    h('button', { class: 'btn primario', text: '+ Novo QR', onclick: () => abrirLink(null) }),
+    h('button', { class: 'btn primario so-qr', text: '+ Novo QR', onclick: () => abrirLink(null) }),
     h('button', { class: 'btn', text: 'Clientes', onclick: abrirClientes }),
-    h('button', { class: 'btn', text: 'Criar em lote', onclick: abrirLote }),
-    h('button', { class: 'btn', text: 'Exportar CSV', onclick: exportarCSV }),
+    h('button', { class: 'btn so-qr', text: 'Criar em lote', onclick: abrirLote }),
+    h('button', { class: 'btn so-qr', text: 'Exportar CSV', onclick: exportarCSV }),
   ] : [
-    h('button', { class: 'btn primario', id: 'btnNovo', text: '+ Novo QR', onclick: () => novoDoCliente() }),
+    h('button', { class: 'btn primario so-qr', id: 'btnNovo', text: '+ Novo QR', onclick: () => novoDoCliente() }),
     botaoWpp('WhatsApp', `Olá! Sou cliente (${EU?.nome || ''}) e preciso de ajuda com meus QR Codes.`),
   ];
   acoes.push(DEMO ? h('button', { class: 'btn', text: 'Zerar demonstração', onclick: () => { if (confirm('Apagar os dados da demonstração e recomeçar?')) { localStorage.removeItem('qr-dinamico-demo'); location.reload(); } } })
@@ -359,9 +428,10 @@ function montarPainel(sessao) {
       h('div', { class: 'acoes' }, acoes)),
     DEMO ? h('div', { class: 'demo', text: ADMIN ? 'Modo demonstração (admin): os dados ficam só neste navegador e o link curto não redireciona de verdade (use "Simular leitura"). Preencha o config.js com o Supabase pra usar pra valer.'
       : 'Modo demonstração (página do cliente "Pizzaria Bella"): os dados ficam só neste navegador. Preencha o config.js com o Supabase pra usar pra valer.' }) : null,
-    h('main', {}, ADMIN ? null : h('div', { id: 'plano' }), h('section', { class: 'cards' + (ADMIN ? '' : ' tres'), id: 'cards' }), barraBusca(), h('section', { class: 'lista', id: 'lista' })),
+    h('nav', { class: 'nav-vistas' }, h('button', { 'data-v': 'qr', text: 'QR Codes', onclick: () => trocarVista('qr') }), h('button', { 'data-v': 'pix', text: 'Pix', onclick: () => trocarVista('pix') })),
+    h('main', { id: 'conteudo' }),
   );
-  recarregar();
+  trocarVista(VISTA);
 }
 
 function barraBusca() {
@@ -703,6 +773,236 @@ function barras(rows, k, lim = 5) {
   return h('div', { class: 'barras-h' }, ...l.map(([n, v]) => { const i = h('i'); i.style.width = (100 * v / tot).toFixed(1) + '%'; return h('div', { class: 'it' }, h('span', { text: n }), h('div', { class: 'tr' }, i), h('span', { class: 'v', text: Math.round(100 * v / tot) + '%' })); }));
 }
 
+// ---------------- Pix (chaves + links de pagamento) ----------------
+let VISTA = 'qr', PIX = { chaves: [], links: [], acessos: [] };
+const PXL = () => window.PixLib;
+const brl = v => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const linkPix = l => `${BASE}/p/${l.slug}`;
+const lerValor = t => { t = String(t || '').trim().replace(/[R$\s]/g, ''); if (!t) return null; if (/,/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); const n = Number(t); return Number.isFinite(n) ? Math.round(n * 100) / 100 : NaN; };
+const slugDe = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+const SLUG_OK = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
+const donoPix = x => (x.dono ? (ADMIN ? CLIENTES.find(c => c.id === x.dono) : EU) : null);
+function statusPix(l) {
+  const c = donoPix(l);
+  if (!l.ativo || (c && c.ativo === false)) return 'inativo';
+  if (c && c.validade && c.validade < hoje()) return 'vencido';
+  return 'ok';
+}
+const chaveDe = id => PIX.chaves.find(k => k.id === id);
+const payloadDe = l => { const k = chaveDe(l.chave_id); return k ? PXL().payload({ chave: k.chave, nome: k.nome, cidade: k.cidade, valor: l.valor, descricao: l.descricao }) : ''; };
+
+function trocarVista(v) {
+  VISTA = v;
+  document.querySelectorAll('.nav-vistas button').forEach(b => b.classList.toggle('ativa', b.dataset.v === v));
+  document.querySelectorAll('.so-qr').forEach(e => { e.hidden = v !== 'qr'; });
+  const m = document.getElementById('conteudo'); if (!m) return;
+  if (v === 'qr') { rep(m, ADMIN ? null : h('div', { id: 'plano' }), h('section', { class: 'cards' + (ADMIN ? '' : ' tres'), id: 'cards' }), barraBusca(), h('section', { class: 'lista', id: 'lista' })); recarregar(); }
+  else { rep(m, h('div', { id: 'pixArea' }, h('p', { class: 'sub', text: 'Carregando…' }))); carregarPix(); }
+}
+
+async function carregarPix() {
+  try {
+    [PIX.chaves, PIX.links, PIX.acessos] = await Promise.all([D.pixChaves(), D.pixLinks(), D.pixAcessos(null, 30)]);
+    if (ADMIN && !CLIENTES.length) CLIENTES = await D.clientes();
+    if (!ADMIN) { const s = await D.sessao().catch(() => null); if (s?.cliente?.id) EU = s.cliente; }
+  } catch (e) { aviso(e.message, true); }
+  desenharPix();
+}
+
+function desenharPix() {
+  const box = document.getElementById('pixArea'); if (!box) return;
+  const lim = ADMIN ? null : (EU?.limite_pix ?? 10), usados = PIX.links.length;
+  const ativos = PIX.links.filter(l => statusPix(l) === 'ok').length;
+  const plano = ADMIN || !EU ? null : (() => {
+    const cheio = usados >= lim, venc = EU.validade && EU.validade < hoje();
+    return h('div', { class: 'plano ' + (venc ? 'erro' : cheio ? 'alerta' : '') },
+      h('div', {}, h('div', { class: 'barra-uso' }, h('i', { style: `width:${Math.min(100, 100 * usados / Math.max(1, lim))}%` })),
+        h('span', { text: `Você está usando ${usados} de ${lim} links Pix.` + (venc ? ` Seu plano venceu em ${dataBR(EU.validade)}: os links estão parados.` : '') })),
+      cheio || venc ? botaoWpp(venc ? 'Renovar pelo WhatsApp' : 'Pedir mais links', `Olá! Sou ${EU.nome} e quero ${venc ? 'renovar meu plano' : 'aumentar meu limite de links Pix'}.`) : null);
+  })();
+  const card = (n, r, cor) => h('div', { class: 'card pix-card ' + cor }, h('div', { class: 'n', text: n }), h('div', { class: 'r', text: r }));
+  const cheio = !ADMIN && usados >= lim;
+  rep(box, plano,
+    h('section', { class: 'cards' }, card(PIX.chaves.length, 'Chaves Pix', 'c1'), card(ADMIN ? usados : `${usados}/${lim}`, 'Links de pagamento', 'c2'), card(ativos, 'Links ativos', 'c3'), card(PIX.acessos.length, 'Acessos (30 dias)', 'c4')),
+    h('section', { class: 'bloco' },
+      h('div', { class: 'bloco-topo' }, h('h2', { text: ADMIN ? 'Chaves Pix' : 'Minhas chaves Pix' }), h('button', { class: 'btn', text: '+ Adicionar chave', onclick: () => abrirChave(null) })),
+      PIX.chaves.length ? h('div', { class: 'lista-simples' }, ...PIX.chaves.map(k => {
+        const dono = donoPix(k), usos = PIX.links.filter(l => l.chave_id === k.id).length;
+        return h('div', { class: 'item', onclick: () => abrirChave(k) },
+          h('span', { class: 'tipo-chave', text: PXL().TIPOS[k.tipo] || k.tipo }),
+          h('div', { class: 'item-meio' }, h('div', { class: 'mono', text: k.chave }), h('div', { class: 'sub', text: [k.apelido, k.nome, ADMIN && dono ? '👤 ' + dono.nome : null].filter(Boolean).join(' · ') })),
+          h('span', { class: 'sub', text: `${usos} link${usos === 1 ? '' : 's'}` }));
+      })) : h('div', { class: 'vazio', text: 'Nenhuma chave ainda. Adicione a chave Pix que vai receber os pagamentos.' })),
+    h('section', { class: 'bloco' },
+      h('div', { class: 'bloco-topo' }, h('h2', { text: 'Links de pagamento' }),
+        h('button', { class: 'btn primario', text: '+ Novo link Pix', disabled: cheio, title: cheio ? 'Limite atingido' : '', onclick: () => { if (!PIX.chaves.length) { aviso('Adicione uma chave Pix primeiro.', true); return abrirChave(null); } abrirPixLink(null); } })),
+      PIX.links.length ? h('div', { class: 'lista-simples' }, ...PIX.links.map(l => {
+        const k = chaveDe(l.chave_id), st = statusPix(l), dono = donoPix(l);
+        return h('div', { class: 'item', onclick: () => abrirPixLink(l) },
+          h('div', { class: 'item-meio' }, h('div', { class: 'nome', text: l.titulo || l.slug }),
+            h('div', { class: 'sub' }, h('span', { class: 'mono', text: '/p/' + l.slug }), ' ', h('button', { class: 'btn mini', text: 'Copiar link', onclick: e => { e.stopPropagation(); copiar(linkPix(l)); } }))),
+          h('div', { class: 'sub', text: [l.valor ? brl(l.valor) : 'Valor livre', k ? (k.apelido || PXL().TIPOS[k.tipo]) : '', ADMIN && dono ? '👤 ' + dono.nome : null].filter(Boolean).join(' · ') }),
+          h('div', { class: 'num', text: `${l.acessos} acesso${l.acessos === 1 ? '' : 's'}` }),
+          h('span', { class: 'selo ' + st, text: st === 'ok' ? 'Ativo' : st === 'vencido' ? 'Plano vencido' : 'Desativado' }));
+      })) : h('div', { class: 'vazio', text: 'Nenhum link ainda. Crie um link com endereço fácil (ex.: /p/sua-loja) pra mandar no WhatsApp ou imprimir o QR.' })));
+}
+
+function selectDono(valor) {
+  const s = h('select', {}, h('option', { value: '', text: '— nenhum (meu) —' }), ...CLIENTES.map(c => h('option', { value: c.id, text: c.nome })));
+  s.value = valor || ''; return s;
+}
+
+function abrirChave(k0) {
+  const novo = !k0, k = k0 ? { ...k0 } : { tipo: '', chave: '', nome: ADMIN ? '' : (EU?.nome || ''), cidade: 'BRASILIA', apelido: '', dono: null };
+  const tipo = h('select', {}, h('option', { value: '', text: 'Selecione o tipo da chave' }), ...Object.entries(PXL().TIPOS).map(([v, t]) => h('option', { value: v, text: t })));
+  tipo.value = k.tipo || '';
+  const DICAS = { cpf: '000.000.000-00', cnpj: '00.000.000/0000-00', email: 'seuemail@exemplo.com', telefone: '(61) 90000-0000', aleatoria: '0000aaaa-00aa-00aa-00aa-000000aaaaaa' };
+  const chave = h('input', { value: k.chave, placeholder: 'Escolha o tipo primeiro' });
+  tipo.addEventListener('change', () => { chave.placeholder = DICAS[tipo.value] || ''; });
+  if (k.tipo) chave.placeholder = DICAS[k.tipo];
+  const nome = h('input', { value: k.nome, maxlength: 60, placeholder: 'Como aparece no banco (ex.: JOÃO DA SILVA)' });
+  const cidade = h('input', { value: k.cidade || 'BRASILIA', maxlength: 40 });
+  const apelido = h('input', { value: k.apelido || '', maxlength: 40, placeholder: 'Ex.: Conta da loja' });
+  const dono = ADMIN ? selectDono(k.dono) : null;
+  const decl = h('input', { type: 'checkbox', checked: !novo });
+  const erro = h('p', { class: 'erro-msg' });
+  const veu = h('div', { class: 'veu centro', onclick: e => { if (e.target === veu) veu.remove(); } });
+  const salvar = h('button', { class: 'btn primario', text: novo ? 'Adicionar chave' : 'Salvar', onclick: async () => {
+    erro.textContent = '';
+    const r = PXL().normalizarChave(tipo.value, chave.value);
+    if (!r.ok) return (erro.textContent = r.erro);
+    if (nome.value.trim().length < 2) return (erro.textContent = 'Digite o nome de quem recebe.');
+    if (!decl.checked) return (erro.textContent = 'Confirme a declaração antes de salvar.');
+    salvar.disabled = true;
+    try { await D.salvarChave({ ...k, tipo: tipo.value, chave: r.chave, nome: nome.value.trim(), cidade: cidade.value.trim() || 'BRASILIA', apelido: apelido.value.trim(), dono: dono ? dono.value || null : k.dono }); aviso(novo ? 'Chave adicionada!' : 'Salvo!'); veu.remove(); carregarPix(); }
+    catch (e) { erro.textContent = e.message; } finally { salvar.disabled = false; }
+  } });
+  veu.append(h('div', { class: 'janela' },
+    h('div', { class: 'lat-topo', style: 'padding:0 0 12px' }, h('h2', { text: novo ? 'Adicionar chave Pix' : 'Chave Pix' }), h('button', { class: 'fechar', text: '×', onclick: () => veu.remove() })),
+    campo('Tipo de chave *', tipo), campo('Chave *', chave),
+    campo('Nome de quem recebe *', nome, 'Aparece na página e no app do banco de quem paga. Use o nome da conta.'),
+    h('div', { class: 'duas' }, campo('Cidade', cidade), campo('Apelido (opcional)', apelido)),
+    dono ? campo('Cliente (dono)', dono) : null,
+    h('div', { class: 'caixa-info alerta' }, h('b', { text: 'Confira a chave antes de salvar. ' }), 'O sistema não confirma a titularidade da conta: se a chave estiver errada, o pagamento pode ir pra outra pessoa.'),
+    h('label', { class: 'chave' }, decl, 'Conferi a chave e sou responsável por ela estar certa.'),
+    erro,
+    h('div', { class: 'rapidos' }, salvar, novo ? null : h('button', { class: 'btn perigo', text: 'Apagar', onclick: async () => {
+      if (!confirm('Apagar esta chave Pix?')) return;
+      try { await D.apagarChave(k.id); aviso('Chave apagada.'); veu.remove(); carregarPix(); } catch (e) { erro.textContent = e.message; }
+    } }), h('button', { class: 'btn', text: 'Cancelar', onclick: () => veu.remove() }))));
+  document.body.append(veu); (novo ? tipo : nome).focus();
+}
+
+function abrirPixLink(l0) {
+  const novo = !l0;
+  const l = l0 ? { ...l0 } : { slug: '', chave_id: PIX.chaves[0]?.id, titulo: '', valor: null, descricao: '', ativo: true, dono: ADMIN ? null : EU?.id };
+  const titulo = h('h2', { text: novo ? 'Novo link Pix' : (l.titulo || l.slug) });
+  const corpo = h('div', { class: 'lat-corpo' }), rodape = h('div', { class: 'lat-rodape' }), abas = h('div', { class: 'abas' });
+  const veu = h('div', { class: 'veu', onclick: e => { if (e.target === veu) fechar(); } });
+  const fechar = () => { veu.remove(); document.removeEventListener('keydown', esc); };
+  const esc = e => { if (e.key === 'Escape') fechar(); };
+  document.addEventListener('keydown', esc);
+  const mostrar = qual => {
+    abas.querySelectorAll('button').forEach(b => b.classList.toggle('ativa', b.dataset.a === qual));
+    rep(corpo); rep(rodape);
+    ({ dados: pixDados, qr: pixQR, acessos: pixAcessosAba })[qual](l, corpo, rodape, { novo, fechar, titulo, mostrar });
+  };
+  for (const [a, t] of [['dados', 'Dados'], ['qr', 'QR e link'], ['acessos', 'Acessos']]) abas.append(h('button', { 'data-a': a, text: t, disabled: novo && a !== 'dados', onclick: () => mostrar(a) }));
+  veu.append(h('aside', { class: 'lateral' }, h('div', { class: 'lat-topo' }, titulo, h('button', { class: 'fechar', text: '×', onclick: fechar })), abas, corpo, rodape));
+  document.body.append(veu);
+  mostrar('dados');
+}
+
+function pixDados(l, corpo, rodape, ctx) {
+  const chave = h('select', {}, ...PIX.chaves.map(k => h('option', { value: k.id, text: `${PXL().TIPOS[k.tipo]}: ${k.chave}${k.apelido ? ' (' + k.apelido + ')' : ''}${ADMIN && k.dono ? ' · 👤 ' + (CLIENTES.find(c => c.id === k.dono)?.nome || '') : ''}` })));
+  chave.value = l.chave_id || '';
+  const tit = h('input', { value: l.titulo || '', maxlength: 60, placeholder: 'Ex.: Pizzaria Bella, Pedido de placa…' });
+  const slug = h('input', { value: l.slug, maxlength: 40, placeholder: 'sua-loja', style: 'font-family:ui-monospace,Consolas,monospace' });
+  let slugMexido = !ctx.novo;
+  slug.addEventListener('input', () => { slugMexido = true; slug.value = slug.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'); });
+  tit.addEventListener('input', () => { if (!slugMexido) slug.value = slugDe(tit.value); });
+  const valor = h('input', { value: l.valor ? String(l.valor).replace('.', ',') : '', inputmode: 'decimal', placeholder: 'Vazio = quem paga digita o valor' });
+  const desc = h('input', { value: l.descricao || '', maxlength: 40, placeholder: 'Opcional, aparece no app do banco (até 40 letras)' });
+  const ativo = h('input', { type: 'checkbox', checked: !!l.ativo });
+  const dono = ADMIN ? selectDono(l.dono) : null;
+  const erro = h('p', { class: 'erro-msg' });
+  add(corpo,
+    statusPix(l) === 'vencido' ? h('div', { class: 'caixa-info alerta', text: 'O plano venceu: este link está mostrando "desativado" pra quem abre.' }) : null,
+    campo('Chave Pix que recebe *', chave),
+    campo('Título', tit),
+    campo('Endereço do link *', h('div', { class: 'juntos prefixo' }, h('span', { text: `${BASE.replace(/^https?:\/\//, '')}/p/` }), slug), 'Letras minúsculas, números e hífen. É o link que você manda pros clientes.'),
+    h('div', { class: 'duas' }, campo('Valor (R$)', valor), campo('Descrição', desc)),
+    dono ? campo('Cliente (dono)', dono) : null,
+    h('label', { class: 'chave' }, ativo, 'Ativo (desmarque pra pausar o link)'),
+    erro);
+  const salvar = h('button', { class: 'btn primario', text: ctx.novo ? 'Criar link' : 'Salvar', onclick: async () => {
+    erro.textContent = '';
+    const v = lerValor(valor.value), s = slug.value.trim().replace(/^-+|-+$/g, '');
+    if (!chave.value) return (erro.textContent = 'Escolha a chave Pix.');
+    if (!SLUG_OK.test(s)) return (erro.textContent = 'Endereço: 3 a 40 letras minúsculas, números ou hífen.');
+    if (Number.isNaN(v) || (v != null && (v <= 0 || v >= 1e6))) return (erro.textContent = 'Valor inválido. Ex.: 89,90');
+    salvar.disabled = true;
+    try {
+      if (!(await D.slugLivre(s, l.id))) { erro.textContent = 'Esse endereço já está em uso. Escolha outro.'; return; }
+      const r = await D.salvarPixLink({ ...l, slug: s, chave_id: chave.value, titulo: tit.value.trim(), valor: v, descricao: desc.value.trim(), ativo: ativo.checked, dono: dono ? dono.value || null : l.dono });
+      Object.assign(l, r); aviso(ctx.novo ? 'Link criado!' : 'Salvo!'); await carregarPix();
+      ctx.titulo.textContent = l.titulo || l.slug;
+      if (ctx.novo) { ctx.fechar(); abrirPixLink(PIX.links.find(x => x.id === r.id) || r); setTimeout(() => document.querySelector('.abas [data-a=qr]')?.click(), 0); }
+      else ctx.mostrar('dados');
+    } catch (e) { erro.textContent = e.message; } finally { salvar.disabled = false; }
+  } });
+  add(rodape, salvar);
+  if (!ctx.novo) add(rodape,
+    h('button', { class: 'btn', text: 'Abrir página', onclick: () => window.open(linkPix(l), '_blank', 'noopener') }),
+    DEMO ? h('button', { class: 'btn', text: 'Simular acesso', onclick: async () => { await D.simularPix(l); await carregarPix(); Object.assign(l, PIX.links.find(x => x.id === l.id)); aviso('Acesso registrado.'); } }) : null,
+    h('span', { class: 'esp' }),
+    h('button', { class: 'btn perigo', text: 'Apagar', onclick: async () => {
+      if (!confirm(`Apagar o link /p/${l.slug}?\n\nQuem tiver o link ou o QR dele não vai mais conseguir pagar por ele.`)) return;
+      try { await D.apagarPixLink(l.id); aviso('Link apagado.'); ctx.fechar(); carregarPix(); } catch (e) { aviso(e.message, true); }
+    } }));
+  tit.focus();
+}
+
+function pixQR(l, corpo, rodape) {
+  const url = linkPix(l), codigo = payloadDe(l);
+  const bloco = (rot, texto, nomeArq, dica) => {
+    const cv = h('canvas'); desenharQR(cv, texto, { tam: 400, margem: 3 });
+    return h('div', { class: 'qr-bloco' }, h('h3', { text: rot }), cv, h('small', { class: 'sub', text: dica }),
+      h('div', { class: 'rapidos' },
+        h('button', { class: 'btn mini', text: 'Baixar PNG', onclick: async () => baixar(await pngQR(texto, { tam: 1024 }), `${nomeArq}.png`) }),
+        h('button', { class: 'btn mini', text: 'Baixar SVG', onclick: () => baixar(new Blob([svgQR(texto)], { type: 'image/svg+xml' }), `${nomeArq}.svg`) })));
+  };
+  add(corpo,
+    h('div', { class: 'link-curto', text: url }),
+    h('div', { class: 'qr-duplo' },
+      bloco('QR do link', url, `pix-link-${l.slug}`, 'Abre a sua página de pagamento (com nome, valor e botão de copiar).'),
+      bloco('QR Pix direto', codigo, `pix-direto-${l.slug}`, 'O app do banco lê e já vai pro pagamento. Bom pra placa no balcão.')),
+    h('h3', { text: 'Pix copia e cola' }), h('div', { class: 'codigo-pix', text: codigo }),
+    h('div', { class: 'caixa-info', style: 'margin-top:12px' }, 'Dica: se trocar a chave ou o valor depois, o "QR do link" continua valendo (ele abre a página atualizada). O "QR Pix direto" tem os dados gravados: gere de novo se mudar algo.'));
+  add(rodape,
+    h('button', { class: 'btn primario', text: 'Copiar link', onclick: () => copiar(url) }),
+    h('button', { class: 'btn', text: 'Copiar código Pix', onclick: () => copiar(codigo) }),
+    botaoWpp('Mandar no WhatsApp', `Pague com Pix por aqui: ${url}`));
+}
+
+async function pixAcessosAba(l, corpo) {
+  add(corpo, h('p', { class: 'sub', text: 'Carregando…' }));
+  let rows; try { rows = await D.pixAcessos(l.id, 90); } catch (e) { rep(corpo, h('p', { class: 'erro-msg', text: e.message })); return; }
+  const d30 = rows.filter(r => new Date(r.em) >= Date.now() - 30 * 864e5);
+  rep(corpo,
+    h('div', { class: 'mini-cards' },
+      h('div', {}, h('b', { text: l.acessos }), h('span', { text: 'Acessos no total' })),
+      h('div', {}, h('b', { text: d30.length }), h('span', { text: 'Últimos 30 dias' })),
+      h('div', {}, h('b', { text: l.ultimo_acesso ? dataHora(l.ultimo_acesso) : '—' }), h('span', { text: 'Último acesso' }))),
+    h('p', { class: 'sub', text: 'Conta quem abriu a página do link (não confirma se o pagamento foi feito: isso você vê no app do seu banco).' }),
+    h('h3', { text: 'Acessos por dia (30 dias)' }), graficoDias(d30, 30),
+    h('h3', { text: 'Aparelhos (90 dias)' }), barras(rows, 'dispositivo'),
+    h('h3', { text: 'Cidades' }), barras(rows, 'cidade', 6),
+    h('h3', { text: 'Últimos acessos' }),
+    rows.length ? h('div', { class: 'ultimos' }, ...rows.slice(0, 20).map(r => h('div', {}, h('time', { text: dataHora(r.em) }), h('span', { text: [r.dispositivo, r.sistema, r.cidade].filter(Boolean).join(' · ') }))))
+      : h('p', { class: 'sub', text: 'Ninguém abriu ainda.' }));
+}
+
 // ---------------- clientes (admin) ----------------
 function situacaoCliente(c) {
   if (!c.ativo) return ['Bloqueado', 'inativo'];
@@ -726,18 +1026,19 @@ function abrirClientes() {
       const [t, cls] = situacaoCliente(c), usados = LINKS.filter(l => l.dono === c.id).length;
       return h('div', { class: 'cli', onclick: () => form(c) },
         h('div', {}, h('div', { class: 'nome', text: c.nome }), h('div', { class: 'sub', text: c.email })),
-        h('div', { class: 'uso', text: `${usados}/${c.limite} QRs` }),
+        h('div', { class: 'uso', text: `${usados}/${c.limite} QRs · ${c.limite_pix ?? 10} Pix` }),
         h('div', { class: 'sub', text: c.validade ? 'até ' + dataBR(c.validade) : 'sem validade' }),
         h('span', { class: 'selo ' + cls, text: t }));
     })));
   };
   const form = c => {
-    const novo = !c; c = c ? { ...c } : { nome: '', email: '', telefone: '', limite: 5, validade: somaMeses(hoje(), 12), ativo: true, observacao: '' };
+    const novo = !c; c = c ? { ...c } : { nome: '', email: '', telefone: '', limite: 5, limite_pix: 10, validade: somaMeses(hoje(), 12), ativo: true, observacao: '' };
     titulo.textContent = novo ? 'Novo cliente' : c.nome;
     const nome = h('input', { value: c.nome, placeholder: 'Nome da empresa / cliente' });
     const email = h('input', { type: 'email', value: c.email, placeholder: 'e-mail que ele vai usar pra entrar', readOnly: !!c.user_id });
     const tel = h('input', { value: c.telefone || '', placeholder: '(61) 9 0000-0000', inputmode: 'tel' });
     const limite = h('input', { type: 'number', min: 0, max: 1000, value: c.limite });
+    const limitePix = h('input', { type: 'number', min: 0, max: 1000, value: c.limite_pix ?? 10 });
     const validade = h('input', { type: 'date', value: c.validade || '' });
     const ativo = h('input', { type: 'checkbox', checked: !!c.ativo });
     const obs = h('textarea', { placeholder: 'Plano, valor, forma de pagamento…' }); obs.value = c.observacao || '';
@@ -748,7 +1049,8 @@ function abrirClientes() {
       h('button', { class: 'btn mini', text: '← Voltar à lista', onclick: lista, style: 'margin-bottom:14px' }),
       !novo ? h('div', { class: 'caixa-info' }, `Usa ${usados} de ${c.limite} QR Codes. `, c.user_id ? 'Já fez o primeiro acesso.' : 'Ainda não fez o primeiro acesso.') : null,
       campo('Nome *', nome), campo('E-mail de acesso *', email, c.user_id ? 'Já vinculado ao login do cliente (não dá pra trocar aqui).' : 'O cliente entra na página principal com esse e-mail (Google ou "Criar conta") e já cai na conta dele.'),
-      h('div', { class: 'duas' }, campo('Telefone / WhatsApp', tel), campo('Limite de QR Codes', limite)),
+      campo('Telefone / WhatsApp', tel),
+      h('div', { class: 'duas' }, campo('Limite de QR Codes', limite), campo('Limite de links Pix', limitePix)),
       campo('Plano válido até', validade, 'Depois dessa data os QRs dele param e ele não consegue editar. Vazio = sem validade.'),
       h('div', { class: 'rapidos', style: 'margin:-6px 0 14px' }, ...[['+1 mês', () => somaMeses(base(), 1)], ['+6 meses', () => somaMeses(base(), 6)], ['+1 ano', () => somaMeses(base(), 12)], ['Sem validade', () => '']]
         .map(([t, f]) => h('button', { class: 'btn mini', type: 'button', text: t, onclick: () => { validade.value = f(); } }))),
@@ -756,7 +1058,7 @@ function abrirClientes() {
       campo('Observações', obs), erro);
     const salvar = h('button', { class: 'btn primario', text: novo ? 'Cadastrar cliente' : 'Salvar', onclick: async () => {
       erro.textContent = '';
-      const d = { ...c, nome: nome.value.trim(), email: email.value.trim().toLowerCase(), telefone: tel.value.trim(), limite: Math.max(0, Math.min(1000, +limite.value | 0)), validade: validade.value || null, ativo: ativo.checked, observacao: obs.value.trim() };
+      const d = { ...c, nome: nome.value.trim(), email: email.value.trim().toLowerCase(), telefone: tel.value.trim(), limite: Math.max(0, Math.min(1000, +limite.value | 0)), limite_pix: Math.max(0, Math.min(1000, +limitePix.value | 0)), validade: validade.value || null, ativo: ativo.checked, observacao: obs.value.trim() };
       if (!d.nome) return (erro.textContent = 'Digite o nome.');
       if (!/^\S+@\S+\.\S+$/.test(d.email)) return (erro.textContent = 'Digite um e-mail válido.');
       salvar.disabled = true;
@@ -784,13 +1086,15 @@ function abrirClientes() {
     const aberto = h('input', { type: 'checkbox', checked: !!cfg.cadastro_aberto });
     const lim = h('input', { type: 'number', min: 0, max: 1000, value: cfg.limite_padrao });
     const dias = h('input', { type: 'number', min: 1, max: 3650, value: cfg.dias_validade || '', placeholder: 'vazio = sem validade' });
+    const limPix = h('input', { type: 'number', min: 0, max: 1000, value: cfg.limite_pix_padrao ?? 10 });
     rep(corpo,
       h('button', { class: 'btn mini', text: '← Voltar à lista', onclick: lista, style: 'margin-bottom:14px' }),
       h('div', { class: 'caixa-info', text: 'Quem cria conta na página principal (e-mail ou Google) vira cliente na hora com estas regras. Depois você ajusta cada cliente na lista (limite, validade, bloquear).' }),
       h('label', { class: 'chave' }, aberto, 'Cadastro aberto (desmarque pra ninguém novo conseguir criar conta)'),
-      h('div', { class: 'duas' }, campo('Limite de QR Codes pra contas novas', lim), campo('Dias de validade pra contas novas', dias, 'Ex.: 30 = teste de 30 dias. Vazio = sem validade.')));
+      h('div', { class: 'duas' }, campo('Limite de QR Codes pra contas novas', lim), campo('Limite de links Pix pra contas novas', limPix)),
+      campo('Dias de validade pra contas novas', dias, 'Ex.: 30 = teste de 30 dias. Vazio = sem validade.'));
     rep(rodape, h('button', { class: 'btn primario', text: 'Salvar', onclick: async () => {
-      try { await D.salvarConfig({ cadastro_aberto: aberto.checked, limite_padrao: Math.max(0, Math.min(1000, +lim.value | 0)), dias_validade: dias.value ? Math.max(1, Math.min(3650, +dias.value | 0)) : null }); aviso('Salvo!'); lista(); }
+      try { await D.salvarConfig({ cadastro_aberto: aberto.checked, limite_padrao: Math.max(0, Math.min(1000, +lim.value | 0)), limite_pix_padrao: Math.max(0, Math.min(1000, +limPix.value | 0)), dias_validade: dias.value ? Math.max(1, Math.min(3650, +dias.value | 0)) : null }); aviso('Salvo!'); lista(); }
       catch (e) { aviso(e.message, true); }
     } }));
   };

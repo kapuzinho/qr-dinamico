@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/admin", "destination": "/admin.html" },
+    { "source": "/p/:s", "destination": "/api/p?s=:s" },
     { "source": "/:c([A-Za-z0-9_-]{3,32})", "destination": "/api/r?c=:c" }
   ],
   "headers": [

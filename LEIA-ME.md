@@ -123,3 +123,25 @@ Crie um repositório novo (ex.: `qr-dinamico`) e suba **todos** os arquivos dest
 3. Supabase do QR Dinâmico → **Authentication → Sign In / Providers → Google** → ligue, cole o
    **Client ID** e o **Client Secret** do Google → **Save**.
 4. Confira **Authentication → URL Configuration** (Site URL e Redirect URLs com o endereço do site).
+
+## Pix (links de pagamento)
+Na aba **Pix** (cliente e admin):
+- **Chaves Pix**: CPF, CNPJ, e-mail, telefone ou aleatória (o sistema confere CPF/CNPJ e o formato).
+  O "nome de quem recebe" aparece na página e no app do banco de quem paga.
+- **Links de pagamento** com endereço fácil: `https://SEU-ENDERECO/p/nome-da-loja`, valor fixo ou livre,
+  descrição, ativar/pausar. A página mostra nome, valor, QR Code, **Pix copia e cola** com botão de copiar,
+  a chave mascarada, aviso pra conferir o recebedor e o botão "Quero meu link Pix" (seu WhatsApp).
+- Em cada link: **QR do link** (abre a página), **QR Pix direto** (o banco lê na hora, bom pra placa no balcão),
+  código copia e cola e o contador de **acessos** (por dia, aparelho, cidade).
+- **Limites**: cada cliente tem "Limite de links Pix" (padrão 10, você muda em Clientes; o padrão de contas novas
+  fica em Clientes → Cadastro pelo site). Plano vencido ou cliente bloqueado = página mostra "link desativado".
+- O sistema **não recebe nem confirma pagamentos**: o Pix vai direto pra conta da chave. O contador mostra quem
+  abriu a página, não quem pagou.
+
+### Atualizando pra ter o Pix
+1. **Supabase → SQL Editor**: rode o `supabase/schema.sql` inteiro de novo.
+2. **GitHub**: suba os arquivos novos/alterados: `pix-lib.js` (novo), `api/p.js` (novo), `package.json`,
+   `vercel.json`, `index.html`, `admin.html`, `painel.js`, `painel.css`, `LEIA-ME.md`, `supabase/schema.sql`.
+   **Não troque o seu `config.js`.**
+3. A Vercel publica sozinha (ela instala o `qrcode-generator` do `package.json`). Teste criando uma chave e um
+   link e abrindo `https://SEU-ENDERECO/p/o-nome-do-link`.

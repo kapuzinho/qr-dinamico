@@ -3,5 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "QR Code dinâmico com painel (Kapuzinho 3D)"
+  "description": "QR Code dinâmico com painel (Kapuzinho 3D)",
+  "dependencies": {
+    "qrcode-generator": "1.4.4"
+  }
 }
