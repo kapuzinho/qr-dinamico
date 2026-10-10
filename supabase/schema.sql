@@ -1,402 +1,262 @@
 -- =====================================================================
---  QR Dinâmico (Kapuzinho 3D) — banco no Supabase
---  Cole TUDO no Supabase → SQL Editor → Run. Pode rodar de novo sem problema.
+-- Kapuzinho 3D — controle de acesso (Supabase / Postgres)
+-- Rode inteiro no SQL Editor do Supabase (pode rodar de novo: é idempotente).
 -- =====================================================================
 
--- quem pode usar o painel (só quem estiver aqui vê/edita os links)
-create table if not exists public.qr_admins (
-  user_id   uuid primary key references auth.users(id) on delete cascade,
-  email     text,
+-- ---------- configurações gerais ----------
+create table if not exists public.config (
+  chave text primary key,
+  valor jsonb not null
+);
+insert into public.config (chave, valor) values
+  ('limite_padrao', '5'),          -- downloads por usuário novo
+  ('sessao_minutos', '3'),         -- sem sinal do navegador por esse tempo = sessão livre
+  ('novos_ativos', 'true')         -- quem se cadastra sozinho (e-mail ou Google) já entra liberado? false = espera aprovação
+on conflict (chave) do nothing;
+
+-- ---------- usuários (perfil ligado ao login do Supabase Auth) ----------
+create table if not exists public.perfis (
+  id uuid primary key references auth.users (id) on delete cascade,
+  email text,
+  nome text,
+  papel text not null default 'usuario' check (papel in ('usuario', 'admin')),
+  ativo boolean not null default true,
+  validade date,                                   -- opcional: acesso até essa data
+  limite_downloads integer not null default 5 check (limite_downloads >= 0),
+  downloads_usados integer not null default 0 check (downloads_usados >= 0),
+  sessao_id uuid,                                  -- sessão ativa (1 por login)
+  sessao_visto timestamptz,                        -- último sinal de vida da sessão
+  sessao_info text,                                -- navegador/sistema da sessão ativa
+  ultimo_login timestamptz,
   criado_em timestamptz not null default now()
 );
 
--- os QR codes / links
-create table if not exists public.qr_links (
-  id              uuid primary key default gen_random_uuid(),
-  codigo          text not null unique check (codigo ~ '^[a-z0-9_-]{3,32}$'),
-  nome            text not null,                       -- identificação: "Placa Google - Barbearia RB"
-  cliente         text,
-  telefone        text,
-  observacao      text,
-  destino         text check (destino is null or destino ~* '^https?://'),
-  validade        date,                                -- vale até o fim desse dia (horário de Brasília); vazio = sem validade
-  ativo           boolean not null default true,
-  destino_vencido text check (destino_vencido is null or destino_vencido ~* '^https?://'), -- opcional: pra onde mandar depois de vencer
-  cliques         integer not null default 0,
-  ultimo_clique   timestamptz,
-  criado_em       timestamptz not null default now(),
-  atualizado_em   timestamptz not null default now(),
-  criado_por      uuid default auth.uid()
+create table if not exists public.downloads (
+  id bigserial primary key,
+  usuario uuid not null references public.perfis (id) on delete cascade,
+  formato text not null,
+  nome text,
+  criado_em timestamptz not null default now()
 );
+create index if not exists downloads_usuario_idx on public.downloads (usuario, criado_em desc);
 
--- cada leitura do QR
-create table if not exists public.qr_cliques (
-  id          bigint generated always as identity primary key,
-  link_id     uuid not null references public.qr_links(id) on delete cascade,
-  em          timestamptz not null default now(),
-  resultado   text not null,      -- ok | vencido | inativo | sem_destino
-  dispositivo text,               -- celular | tablet | computador
-  sistema     text,               -- Android | iPhone | Windows ...
-  navegador   text,
-  pais        text,
-  regiao      text,
-  cidade      text,
-  origem      text                -- de onde veio (referer), quando o celular informa
+create table if not exists public.acessos (
+  id bigserial primary key,
+  usuario uuid references public.perfis (id) on delete cascade,
+  evento text not null,            -- login | bloqueado | logout | derrubado | expirou | negado
+  info text,
+  criado_em timestamptz not null default now()
 );
-create index if not exists qr_cliques_link_em on public.qr_cliques (link_id, em desc);
+create index if not exists acessos_usuario_idx on public.acessos (usuario, criado_em desc);
 
--- atualizado_em automático (só quando os dados mudam, não a cada clique)
-create or replace function public.qr_tocar() returns trigger language plpgsql as $$
-begin
-  if row(new.codigo, new.nome, new.cliente, new.telefone, new.observacao, new.destino, new.validade, new.ativo, new.destino_vencido)
-     is distinct from row(old.codigo, old.nome, old.cliente, old.telefone, old.observacao, old.destino, old.validade, old.ativo, old.destino_vencido)
-  then new.atualizado_em := now(); end if;
-  return new;
-end $$;
-drop trigger if exists qr_links_tocar on public.qr_links;
-create trigger qr_links_tocar before update on public.qr_links for each row execute function public.qr_tocar();
+-- ---------- segurança: ninguém escreve direto nas tabelas, só pelas funções abaixo ----------
+alter table public.config enable row level security;
+alter table public.perfis enable row level security;
+alter table public.downloads enable row level security;
+alter table public.acessos enable row level security;
 
--- é admin?
-create or replace function public.qr_eh_admin() returns boolean
+-- leitura passa pelo RLS; escrita direta é proibida pra quem usa o site (tudo via funções)
+revoke insert, update, delete, truncate on public.config, public.perfis, public.downloads, public.acessos from anon, authenticated;
+grant select on public.config, public.perfis, public.downloads, public.acessos to authenticated;
+revoke all on public.config, public.perfis, public.downloads, public.acessos from anon;
+
+create or replace function public.eh_admin() returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.qr_admins where user_id = auth.uid())
+  select exists (select 1 from perfis where id = auth.uid() and papel = 'admin' and ativo);
 $$;
 
--- segurança: só admins mexem nos links e veem os cliques
-alter table public.qr_admins  enable row level security;
-alter table public.qr_links   enable row level security;
-alter table public.qr_cliques enable row level security;
+drop policy if exists perfis_ler on public.perfis;
+create policy perfis_ler on public.perfis for select to authenticated using (id = auth.uid() or public.eh_admin());
+drop policy if exists downloads_ler on public.downloads;
+create policy downloads_ler on public.downloads for select to authenticated using (usuario = auth.uid() or public.eh_admin());
+drop policy if exists acessos_ler on public.acessos;
+create policy acessos_ler on public.acessos for select to authenticated using (public.eh_admin());
+drop policy if exists config_ler on public.config;
+create policy config_ler on public.config for select to authenticated using (true);
 
-drop policy if exists "admin ve a si" on public.qr_admins;
-create policy "admin ve a si" on public.qr_admins for select using (user_id = auth.uid());
-
-drop policy if exists "admins links" on public.qr_links;
-create policy "admins links" on public.qr_links for all using (public.qr_eh_admin()) with check (public.qr_eh_admin());
-
-drop policy if exists "admins cliques ver" on public.qr_cliques;
-create policy "admins cliques ver" on public.qr_cliques for select using (public.qr_eh_admin());
-drop policy if exists "admins cliques apagar" on public.qr_cliques;
-create policy "admins cliques apagar" on public.qr_cliques for delete using (public.qr_eh_admin());
-
--- =====================================================================
---  CLIENTES (página do cliente): cada cliente vê só os QRs dele,
---  cria até o limite e só troca nome / destino / observação.
--- =====================================================================
-create table if not exists public.qr_clientes (
-  id         uuid primary key default gen_random_uuid(),
-  user_id    uuid unique references auth.users(id) on delete set null,   -- preenchido no 1º acesso
-  nome       text not null,
-  email      text not null unique check (email = lower(email) and position('@' in email) > 1),
-  telefone   text,
-  limite     integer not null default 5 check (limite between 0 and 1000),
-  validade   date,                      -- validade do plano (vazio = sem validade)
-  ativo      boolean not null default true,
-  observacao text,
-  criado_em  timestamptz not null default now()
-);
-alter table public.qr_links add column if not exists dono uuid references public.qr_clientes(id) on delete set null;
-alter table public.qr_clientes add column if not exists limite_pix integer not null default 10 check (limite_pix between 0 and 1000);
-create index if not exists qr_links_dono on public.qr_links (dono);
-
--- id do cliente logado (só se estiver ativo)
-create or replace function public.qr_meu_cliente() returns uuid
-language sql stable security definer set search_path = public as $$
-  select id from public.qr_clientes where user_id = auth.uid() and ativo
-$$;
-
-alter table public.qr_clientes enable row level security;
-drop policy if exists "admins clientes" on public.qr_clientes;
-create policy "admins clientes" on public.qr_clientes for all using (public.qr_eh_admin()) with check (public.qr_eh_admin());
-drop policy if exists "cliente ve seu cadastro" on public.qr_clientes;
-create policy "cliente ve seu cadastro" on public.qr_clientes for select using (user_id = auth.uid());
-
-drop policy if exists "cliente ve seus links" on public.qr_links;
-create policy "cliente ve seus links" on public.qr_links for select using (dono is not null and dono = public.qr_meu_cliente());
-drop policy if exists "cliente cria links" on public.qr_links;
-create policy "cliente cria links" on public.qr_links for insert with check (dono is not null and dono = public.qr_meu_cliente());
-drop policy if exists "cliente edita links" on public.qr_links;
-create policy "cliente edita links" on public.qr_links for update using (dono is not null and dono = public.qr_meu_cliente()) with check (dono = public.qr_meu_cliente());
-drop policy if exists "cliente ve cliques" on public.qr_cliques;
-create policy "cliente ve cliques" on public.qr_cliques for select
-  using (exists (select 1 from public.qr_links l where l.id = link_id and l.dono is not null and l.dono = public.qr_meu_cliente()));
-
--- regras do cliente (rodam no banco, não dá pra burlar pelo navegador)
-create or replace function public.qr_regras_cliente() returns trigger
+-- todo usuário criado no Auth ganha um perfil com o limite padrão
+create or replace function public.novo_perfil() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare
-  c public.qr_clientes;
-  n integer;
-  v_nome text; v_dest text; v_obs text;
 begin
-  if auth.uid() is null or public.qr_eh_admin() then return new; end if;   -- admin e o redirecionamento passam direto
-  select * into c from public.qr_clientes where user_id = auth.uid() and ativo;
-  if not found then raise exception 'Sem permissão.' using errcode = '42501'; end if;
-  if c.validade is not null and c.validade < (now() at time zone 'America/Sao_Paulo')::date then
-    raise exception 'Seu plano venceu em %. Fale com a gente pra renovar.', to_char(c.validade, 'DD/MM/YYYY');
-  end if;
-  if tg_op = 'INSERT' then
-    perform pg_advisory_xact_lock(hashtext(c.id::text));
-    select count(*) into n from public.qr_links where dono = c.id;
-    if n >= c.limite then
-      raise exception 'Limite de % QR Codes atingido. Fale com a gente pra aumentar.', c.limite;
-    end if;
-    if new.codigo !~ '^[a-z2-9]{6,8}$' then raise exception 'Código inválido.'; end if;
-    new.dono := c.id; new.ativo := true; new.validade := null; new.destino_vencido := null;
-    new.cliques := 0; new.ultimo_clique := null; new.cliente := c.nome; new.telefone := c.telefone;
-    new.criado_por := auth.uid(); new.criado_em := now();
-    return new;
-  end if;
-  -- UPDATE: o cliente só muda nome, destino e observação
-  v_nome := new.nome; v_dest := new.destino; v_obs := new.observacao;
-  new := old;
-  new.nome := v_nome; new.destino := v_dest; new.observacao := v_obs;
+  insert into perfis (id, email, nome, limite_downloads, ativo)
+  values (new.id, new.email,
+          coalesce(nullif(new.raw_user_meta_data ->> 'nome', ''), nullif(new.raw_user_meta_data ->> 'full_name', ''),
+                   nullif(new.raw_user_meta_data ->> 'name', ''), split_part(new.email, '@', 1)),
+          coalesce((select (valor #>> '{}')::int from config where chave = 'limite_padrao'), 5),
+          -- criado pelo admin: sempre ativo; cadastro feito pela própria pessoa: segue a configuração
+          case when new.raw_user_meta_data ->> 'criado_pelo_admin' = 'sim' then true
+               else coalesce((select (valor #>> '{}')::boolean from config where chave = 'novos_ativos'), true) end)
+  on conflict (id) do nothing;
   return new;
 end $$;
-drop trigger if exists qr_links_regras on public.qr_links;
-create trigger qr_links_regras before insert or update on public.qr_links for each row execute function public.qr_regras_cliente();
+drop trigger if exists ao_criar_usuario on auth.users;
+create trigger ao_criar_usuario after insert on auth.users for each row execute function public.novo_perfil();
 
--- configurações do cadastro (uma linha só): cadastro aberto? limite e validade padrão de quem se cadastra sozinho
-create table if not exists public.qr_config (
-  id                 integer primary key default 1 check (id = 1),
-  cadastro_aberto    boolean not null default true,
-  limite_padrao      integer not null default 5 check (limite_padrao between 0 and 1000),
-  dias_validade      integer check (dias_validade is null or dias_validade between 1 and 3650)  -- vazio = sem validade
-);
-alter table public.qr_config add column if not exists limite_pix_padrao integer not null default 10 check (limite_pix_padrao between 0 and 1000);
-insert into public.qr_config (id) values (1) on conflict do nothing;
-alter table public.qr_config enable row level security;
-drop policy if exists "admins config" on public.qr_config;
-create policy "admins config" on public.qr_config for all using (public.qr_eh_admin()) with check (public.qr_eh_admin());
-
--- chamada pela página do cliente depois do login:
---  1) se você já cadastrou esse e-mail no admin, liga o login ao cadastro;
---  2) senão, e se o cadastro estiver aberto, cria a conta do cliente na hora (limite/validade padrão).
-create or replace function public.qr_vincular() returns jsonb
-language plpgsql security definer set search_path = public as $$
-declare
-  e text; conf timestamptz; meta jsonb; c public.qr_clientes; cfg public.qr_config;
-begin
-  if auth.uid() is null then return jsonb_build_object('status', 'sem_login'); end if;
-  select lower(email), email_confirmed_at, coalesce(raw_user_meta_data, '{}'::jsonb) into e, conf, meta from auth.users where id = auth.uid();
-  select * into c from public.qr_clientes where user_id = auth.uid();
-  if not found and conf is not null then
-    update public.qr_clientes set user_id = auth.uid() where email = e and user_id is null returning * into c;
-  end if;
-  if c.id is null and conf is not null and not exists (select 1 from public.qr_admins where user_id = auth.uid()) then
-    select * into cfg from public.qr_config where id = 1;
-    if coalesce(cfg.cadastro_aberto, true) and not exists (select 1 from public.qr_clientes where email = e) then
-      insert into public.qr_clientes (user_id, nome, email, limite, limite_pix, validade, observacao)
-      values (auth.uid(),
-              left(coalesce(nullif(trim(meta->>'nome'), ''), nullif(trim(meta->>'full_name'), ''), nullif(trim(meta->>'name'), ''), split_part(e, '@', 1)), 120),
-              e, coalesce(cfg.limite_padrao, 5), coalesce(cfg.limite_pix_padrao, 10),
-              case when cfg.dias_validade is null then null else (now() at time zone 'America/Sao_Paulo')::date + cfg.dias_validade end,
-              'Cadastro feito pelo site')
-      returning * into c;
-    end if;
-  end if;
-  if c.id is null then return jsonb_build_object('status', case when conf is null then 'sem_confirmar' else 'sem_cadastro' end, 'email', e); end if;
-  return jsonb_build_object(
-    'status', case when not c.ativo then 'bloqueado'
-                   when c.validade is not null and c.validade < (now() at time zone 'America/Sao_Paulo')::date then 'vencido'
-                   else 'ok' end,
-    'id', c.id, 'nome', c.nome, 'limite', c.limite, 'limite_pix', c.limite_pix, 'validade', c.validade, 'ativo', c.ativo,
-    'usados', (select count(*) from public.qr_links where dono = c.id));
-end $$;
-revoke all on function public.qr_vincular() from public;
-grant execute on function public.qr_vincular() to authenticated;
-
--- usada pelo redirecionamento (/codigo): devolve o destino e registra o clique.
--- Roda com a chave pública (anon), mas só devolve o necessário pra redirecionar.
-create or replace function public.qr_abrir(
-  p_codigo text, p_contar boolean default true,
-  p_dispositivo text default null, p_sistema text default null, p_navegador text default null,
-  p_pais text default null, p_regiao text default null, p_cidade text default null, p_origem text default null
-) returns jsonb
-language plpgsql security definer set search_path = public as $$
-declare
-  l public.qr_links;
-  c public.qr_clientes;
-  st text;
-begin
-  select * into l from public.qr_links where codigo = lower(trim(p_codigo));
-  if not found then return jsonb_build_object('status', 'nao_encontrado'); end if;
-  if l.dono is not null then
-    select * into c from public.qr_clientes where id = l.dono;
-  end if;
-
-  st := case
-    when c.id is not null and not c.ativo then 'inativo'
-    when c.id is not null and c.validade is not null and c.validade < (now() at time zone 'America/Sao_Paulo')::date then 'vencido'
-    when not l.ativo then 'inativo'
-    when l.validade is not null and l.validade < (now() at time zone 'America/Sao_Paulo')::date then 'vencido'
-    when coalesce(l.destino, '') = '' then 'sem_destino'
-    else 'ok' end;
-
-  if p_contar then
-    insert into public.qr_cliques (link_id, resultado, dispositivo, sistema, navegador, pais, regiao, cidade, origem)
-    values (l.id, st, left(p_dispositivo, 20), left(p_sistema, 30), left(p_navegador, 30),
-            left(p_pais, 60), left(p_regiao, 60), left(p_cidade, 80), left(p_origem, 300));
-    if st = 'ok' then
-      update public.qr_links set cliques = cliques + 1, ultimo_clique = now() where id = l.id;
-    end if;
-  end if;
-
-  return jsonb_build_object(
-    'status', st,
-    'destino', case st when 'ok' then l.destino when 'vencido' then l.destino_vencido end
-  );
-end $$;
-
-revoke all on function public.qr_abrir(text, boolean, text, text, text, text, text, text, text) from public;
-grant execute on function public.qr_abrir(text, boolean, text, text, text, text, text, text, text) to anon, authenticated;
-
--- =====================================================================
---  DEPOIS de criar seu usuário (Authentication → Users → Add user),
---  rode isto trocando o e-mail, pra liberar o painel pra você:
---
---  insert into public.qr_admins (user_id, email)
---  select id, email from auth.users where email = 'SEU-EMAIL@gmail.com'
---  on conflict do nothing;
--- =====================================================================
-
--- =====================================================================
---  PIX: chaves Pix e links de pagamento (página pública /p/nome-do-link)
--- =====================================================================
-create table if not exists public.pix_chaves (
-  id        uuid primary key default gen_random_uuid(),
-  dono      uuid references public.qr_clientes(id) on delete cascade,     -- vazio = sua (admin)
-  tipo      text not null check (tipo in ('cpf', 'cnpj', 'email', 'telefone', 'aleatoria')),
-  chave     text not null check (length(chave) between 3 and 77),
-  apelido   text,
-  nome      text not null check (length(nome) between 2 and 60),           -- nome de quem recebe (aparece no app do banco)
-  cidade    text not null default 'BRASILIA' check (length(cidade) between 2 and 40),
-  criado_em timestamptz not null default now(),
-  criado_por uuid default auth.uid()
-);
-create index if not exists pix_chaves_dono on public.pix_chaves (dono);
-
-create table if not exists public.pix_links (
-  id            uuid primary key default gen_random_uuid(),
-  slug          text not null unique check (slug ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'),
-  dono          uuid references public.qr_clientes(id) on delete cascade,
-  chave_id      uuid not null references public.pix_chaves(id) on delete restrict,
-  titulo        text,
-  valor         numeric(12, 2) check (valor is null or (valor > 0 and valor < 1000000)),
-  descricao     text check (descricao is null or length(descricao) <= 40),
-  ativo         boolean not null default true,
-  acessos       integer not null default 0,
-  ultimo_acesso timestamptz,
-  criado_em     timestamptz not null default now(),
-  criado_por    uuid default auth.uid()
-);
-create index if not exists pix_links_dono on public.pix_links (dono);
-
-create table if not exists public.pix_acessos (
-  id          bigint generated always as identity primary key,
-  link_id     uuid not null references public.pix_links(id) on delete cascade,
-  em          timestamptz not null default now(),
-  dispositivo text, sistema text, cidade text, regiao text
-);
-create index if not exists pix_acessos_link_em on public.pix_acessos (link_id, em desc);
-
-alter table public.pix_chaves  enable row level security;
-alter table public.pix_links   enable row level security;
-alter table public.pix_acessos enable row level security;
-
-drop policy if exists "admins pix chaves" on public.pix_chaves;
-create policy "admins pix chaves" on public.pix_chaves for all using (public.qr_eh_admin()) with check (public.qr_eh_admin());
-drop policy if exists "cliente pix chaves" on public.pix_chaves;
-create policy "cliente pix chaves" on public.pix_chaves for all
-  using (dono is not null and dono = public.qr_meu_cliente()) with check (dono is not null and dono = public.qr_meu_cliente());
-
-drop policy if exists "admins pix links" on public.pix_links;
-create policy "admins pix links" on public.pix_links for all using (public.qr_eh_admin()) with check (public.qr_eh_admin());
-drop policy if exists "cliente pix links" on public.pix_links;
-create policy "cliente pix links" on public.pix_links for all
-  using (dono is not null and dono = public.qr_meu_cliente()) with check (dono is not null and dono = public.qr_meu_cliente());
-
-drop policy if exists "admins pix acessos" on public.pix_acessos;
-create policy "admins pix acessos" on public.pix_acessos for select using (public.qr_eh_admin());
-drop policy if exists "cliente pix acessos" on public.pix_acessos;
-create policy "cliente pix acessos" on public.pix_acessos for select
-  using (exists (select 1 from public.pix_links l where l.id = link_id and l.dono is not null and l.dono = public.qr_meu_cliente()));
-
--- regras do cliente no Pix: limite, dono, contador e chave só dele
-create or replace function public.pix_regras_cliente() returns trigger
-language plpgsql security definer set search_path = public as $$
-declare
-  c public.qr_clientes; n integer;
-begin
-  if auth.uid() is null or public.qr_eh_admin() then return new; end if;
-  select * into c from public.qr_clientes where user_id = auth.uid() and ativo;
-  if not found then raise exception 'Sem permissão.' using errcode = '42501'; end if;
-  if c.validade is not null and c.validade < (now() at time zone 'America/Sao_Paulo')::date then
-    raise exception 'Seu plano venceu em %. Fale com a gente pra renovar.', to_char(c.validade, 'DD/MM/YYYY');
-  end if;
-  new.dono := c.id;
-  if tg_table_name = 'pix_chaves' then
-    if tg_op = 'INSERT' then
-      perform pg_advisory_xact_lock(hashtext('pixc' || c.id::text));
-      select count(*) into n from public.pix_chaves where dono = c.id;
-      if n >= greatest(c.limite_pix, 1) then raise exception 'Limite de % chaves Pix atingido. Fale com a gente pra aumentar.', greatest(c.limite_pix, 1); end if;
-      new.criado_por := auth.uid(); new.criado_em := now();
-    else
-      new.criado_por := old.criado_por; new.criado_em := old.criado_em;
-    end if;
-    return new;
-  end if;
-  -- pix_links
-  if not exists (select 1 from public.pix_chaves where id = new.chave_id and dono = c.id) then
-    raise exception 'Escolha uma das suas chaves Pix.';
-  end if;
-  if tg_op = 'INSERT' then
-    perform pg_advisory_xact_lock(hashtext('pixl' || c.id::text));
-    select count(*) into n from public.pix_links where dono = c.id;
-    if n >= c.limite_pix then raise exception 'Limite de % links Pix atingido. Fale com a gente pra aumentar.', c.limite_pix; end if;
-    new.acessos := 0; new.ultimo_acesso := null; new.criado_por := auth.uid(); new.criado_em := now();
-  else
-    new.acessos := old.acessos; new.ultimo_acesso := old.ultimo_acesso; new.criado_por := old.criado_por; new.criado_em := old.criado_em;
-  end if;
-  return new;
-end $$;
-drop trigger if exists pix_chaves_regras on public.pix_chaves;
-create trigger pix_chaves_regras before insert or update on public.pix_chaves for each row execute function public.pix_regras_cliente();
-drop trigger if exists pix_links_regras on public.pix_links;
-create trigger pix_links_regras before insert or update on public.pix_links for each row execute function public.pix_regras_cliente();
-
--- usada pela página pública /p/nome: devolve os dados pro Pix e conta o acesso
-create or replace function public.pix_abrir(
-  p_slug text, p_contar boolean default true,
-  p_dispositivo text default null, p_sistema text default null, p_cidade text default null, p_regiao text default null
-) returns jsonb
-language plpgsql security definer set search_path = public as $$
-declare
-  l public.pix_links; k public.pix_chaves; c public.qr_clientes; st text;
-begin
-  select * into l from public.pix_links where slug = lower(trim(p_slug));
-  if not found then return jsonb_build_object('status', 'nao_encontrado'); end if;
-  select * into k from public.pix_chaves where id = l.chave_id;
-  if l.dono is not null then select * into c from public.qr_clientes where id = l.dono; end if;
-  st := case
-    when c.id is not null and not c.ativo then 'inativo'
-    when c.id is not null and c.validade is not null and c.validade < (now() at time zone 'America/Sao_Paulo')::date then 'vencido'
-    when not l.ativo then 'inativo'
-    else 'ok' end;
-  if p_contar then
-    insert into public.pix_acessos (link_id, dispositivo, sistema, cidade, regiao)
-    values (l.id, left(p_dispositivo, 20), left(p_sistema, 30), left(p_cidade, 80), left(p_regiao, 60));
-    if st = 'ok' then update public.pix_links set acessos = acessos + 1, ultimo_acesso = now() where id = l.id; end if;
-  end if;
-  if st <> 'ok' then return jsonb_build_object('status', st); end if;
-  return jsonb_build_object('status', 'ok', 'titulo', l.titulo, 'valor', l.valor, 'descricao', l.descricao,
-    'tipo', k.tipo, 'chave', k.chave, 'nome', k.nome, 'cidade', k.cidade);
-end $$;
-revoke all on function public.pix_abrir(text, boolean, text, text, text, text) from public;
-grant execute on function public.pix_abrir(text, boolean, text, text, text, text) to anon, authenticated;
-
--- o painel do cliente confere se o nome do link está livre (sem mostrar de quem é)
-create or replace function public.pix_slug_livre(p_slug text) returns boolean
+create or replace function public.minutos_sessao() returns integer
 language sql stable security definer set search_path = public as $$
-  select not exists (select 1 from public.pix_links where slug = lower(trim(p_slug)))
+  select coalesce((select (valor #>> '{}')::int from config where chave = 'sessao_minutos'), 3);
 $$;
-grant execute on function public.pix_slug_livre(text) to authenticated;
+
+-- checa se a conta pode usar o sistema agora (ativa e dentro da validade)
+create or replace function public.checar_conta(p perfis) returns void
+language plpgsql as $$
+begin
+  if p.id is null then raise exception 'CONTA_INEXISTENTE' using hint = 'Conta sem perfil.'; end if;
+  if not p.ativo then
+    if p.ultimo_login is null then raise exception 'CONTA_INATIVA' using hint = 'Cadastro recebido! Seu acesso ainda vai ser liberado pelo administrador.'; end if;
+    raise exception 'CONTA_INATIVA' using hint = 'Seu acesso está desativado. Fale com o administrador.';
+  end if;
+  if p.validade is not null and p.validade < current_date then raise exception 'CONTA_VENCIDA' using hint = 'Seu acesso venceu. Fale com o administrador.'; end if;
+end $$;
+
+-- ---------- sessão única por login ----------
+-- Abre a sessão deste navegador. Se já existe outra sessão viva (outro computador), NÃO deixa entrar.
+create or replace function public.iniciar_sessao(p_info text default null, p_sessao_atual uuid default null)
+returns json language plpgsql security definer set search_path = public as $$
+declare p perfis; nova uuid;
+begin
+  select * into p from perfis where id = auth.uid() for update;
+  perform checar_conta(p);
+  -- o mesmo navegador recarregando a página continua com a mesma sessão
+  if p_sessao_atual is not null and p.sessao_id = p_sessao_atual then
+    update perfis set sessao_visto = now() where id = p.id;
+    return json_build_object('sessao', p.sessao_id, 'nome', p.nome, 'papel', p.papel,
+      'restantes', greatest(p.limite_downloads - p.downloads_usados, 0), 'limite', p.limite_downloads);
+  end if;
+  if p.sessao_id is not null and p.sessao_visto > now() - make_interval(mins => minutos_sessao()) then
+    insert into acessos (usuario, evento, info) values (p.id, 'bloqueado', left(p_info, 300));
+    raise exception 'SESSAO_ATIVA' using hint = 'Essa conta já está aberta em outro computador/navegador. Saia de lá (botão Sair) ou espere alguns minutos depois de fechar.';
+  end if;
+  nova := gen_random_uuid();
+  update perfis set sessao_id = nova, sessao_visto = now(), sessao_info = left(p_info, 300), ultimo_login = now() where id = p.id;
+  insert into acessos (usuario, evento, info) values (p.id, 'login', left(p_info, 300));
+  return json_build_object('sessao', nova, 'nome', p.nome, 'papel', p.papel,
+    'restantes', greatest(p.limite_downloads - p.downloads_usados, 0), 'limite', p.limite_downloads);
+end $$;
+
+-- sinal de vida (o site chama a cada minuto). ok=false: sessão não vale mais (derrubada, outra entrou, conta desativada)
+create or replace function public.pulso(p_sessao uuid)
+returns json language plpgsql security definer set search_path = public as $$
+declare p perfis;
+begin
+  select * into p from perfis where id = auth.uid();
+  if p.id is null or not p.ativo or (p.validade is not null and p.validade < current_date) or p.sessao_id is distinct from p_sessao then
+    return json_build_object('ok', false);
+  end if;
+  update perfis set sessao_visto = now() where id = p.id;
+  return json_build_object('ok', true, 'restantes', greatest(p.limite_downloads - p.downloads_usados, 0), 'limite', p.limite_downloads);
+end $$;
+
+create or replace function public.encerrar_sessao(p_sessao uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update perfis set sessao_id = null, sessao_visto = null, sessao_info = null where id = auth.uid() and sessao_id = p_sessao;
+  if found then insert into acessos (usuario, evento) values (auth.uid(), 'logout'); end if;
+end $$;
+
+-- ---------- downloads com limite (chamada pela Edge Function "exportar", antes de entregar o arquivo) ----------
+create or replace function public.consumir_download(p_sessao uuid, p_formato text, p_nome text)
+returns json language plpgsql security definer set search_path = public as $$
+declare p perfis;
+begin
+  select * into p from perfis where id = auth.uid() for update;     -- trava a linha: 2 cliques ao mesmo tempo não furam o limite
+  perform checar_conta(p);
+  if p.sessao_id is distinct from p_sessao or p.sessao_visto < now() - make_interval(mins => minutos_sessao()) then
+    insert into acessos (usuario, evento, info) values (p.id, 'negado', 'download com sessão inválida');
+    raise exception 'SESSAO_INVALIDA' using hint = 'Sua sessão expirou ou foi aberta em outro lugar. Entre de novo.';
+  end if;
+  if p.downloads_usados >= p.limite_downloads then
+    raise exception 'LIMITE' using hint = 'Você atingiu o limite de downloads. Fale com o administrador pra liberar mais.';
+  end if;
+  update perfis set downloads_usados = downloads_usados + 1, sessao_visto = now() where id = p.id;
+  insert into downloads (usuario, formato, nome) values (p.id, left(p_formato, 10), left(p_nome, 150));
+  return json_build_object('restantes', p.limite_downloads - p.downloads_usados - 1, 'limite', p.limite_downloads);
+end $$;
+
+-- ---------- administração (só admin) ----------
+create or replace function public.exigir_admin() returns void
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not eh_admin() then raise exception 'SEM_PERMISSAO' using hint = 'Só administradores.'; end if;
+end $$;
+
+create or replace function public.admin_listar()
+returns table (id uuid, email text, nome text, papel text, ativo boolean, validade date, limite_downloads int,
+               downloads_usados int, online boolean, sessao_info text, sessao_visto timestamptz, ultimo_login timestamptz, criado_em timestamptz)
+language plpgsql security definer set search_path = public as $$
+begin
+  perform exigir_admin();
+  return query select p.id, p.email, p.nome, p.papel, p.ativo, p.validade, p.limite_downloads, p.downloads_usados,
+    (p.sessao_id is not null and p.sessao_visto > now() - make_interval(mins => minutos_sessao())),
+    p.sessao_info, p.sessao_visto, p.ultimo_login, p.criado_em
+  from perfis p order by p.criado_em desc;
+end $$;
+
+create or replace function public.admin_atualizar(p_id uuid, p_nome text, p_papel text, p_ativo boolean, p_limite int, p_validade date)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform exigir_admin();
+  if p_id = auth.uid() and (p_papel <> 'admin' or not p_ativo) then
+    raise exception 'PROPRIO_ADMIN' using hint = 'Você não pode tirar o seu próprio acesso de administrador.';
+  end if;
+  update perfis set nome = p_nome, papel = p_papel, ativo = p_ativo, limite_downloads = greatest(p_limite, 0), validade = p_validade where id = p_id;
+  -- desativou: derruba a sessão na hora
+  if not p_ativo then update perfis set sessao_id = null, sessao_visto = null where id = p_id; end if;
+end $$;
+
+create or replace function public.admin_zerar_downloads(p_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform exigir_admin();
+  update perfis set downloads_usados = 0 where id = p_id;
+end $$;
+
+create or replace function public.admin_derrubar(p_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform exigir_admin();
+  update perfis set sessao_id = null, sessao_visto = null, sessao_info = null where id = p_id;
+  insert into acessos (usuario, evento, info) values (p_id, 'derrubado', 'pelo administrador');
+end $$;
+
+drop function if exists public.admin_config(int, int, boolean);
+create or replace function public.admin_config(p_limite_padrao int, p_sessao_minutos int, p_aplicar_todos boolean default false, p_novos_ativos boolean default true)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform exigir_admin();
+  insert into config values ('novos_ativos', to_jsonb(p_novos_ativos)) on conflict (chave) do update set valor = excluded.valor;
+  insert into config values ('limite_padrao', to_jsonb(greatest(p_limite_padrao, 0))) on conflict (chave) do update set valor = excluded.valor;
+  insert into config values ('sessao_minutos', to_jsonb(greatest(p_sessao_minutos, 1))) on conflict (chave) do update set valor = excluded.valor;
+  if p_aplicar_todos then update perfis set limite_downloads = greatest(p_limite_padrao, 0) where papel = 'usuario'; end if;
+end $$;
+
+create or replace function public.admin_historico(p_id uuid default null, p_limite int default 200)
+returns table (quando timestamptz, usuario uuid, email text, tipo text, detalhe text)
+language plpgsql security definer set search_path = public as $$
+begin
+  perform exigir_admin();
+  return query
+    select * from (
+      select d.criado_em, d.usuario, p.email, ('download ' || d.formato)::text, d.nome from downloads d join perfis p on p.id = d.usuario
+       where p_id is null or d.usuario = p_id
+      union all
+      select a.criado_em, a.usuario, p.email, a.evento, a.info from acessos a left join perfis p on p.id = a.usuario
+       where p_id is null or a.usuario = p_id
+    ) h order by 1 desc limit least(p_limite, 1000);
+end $$;
+
+-- quem pode chamar o quê (usuário anônimo não chama nada)
+revoke all on function public.iniciar_sessao(text, uuid), public.pulso(uuid), public.encerrar_sessao(uuid),
+  public.consumir_download(uuid, text, text), public.admin_listar(), public.admin_atualizar(uuid, text, text, boolean, int, date),
+  public.admin_zerar_downloads(uuid), public.admin_derrubar(uuid), public.admin_config(int, int, boolean, boolean),
+  public.admin_historico(uuid, int), public.eh_admin(), public.checar_conta(perfis), public.exigir_admin(), public.minutos_sessao() from public, anon;
+grant execute on function public.iniciar_sessao(text, uuid), public.pulso(uuid), public.encerrar_sessao(uuid),
+  public.consumir_download(uuid, text, text), public.admin_listar(), public.admin_atualizar(uuid, text, text, boolean, int, date),
+  public.admin_zerar_downloads(uuid), public.admin_derrubar(uuid), public.admin_config(int, int, boolean, boolean),
+  public.admin_historico(uuid, int), public.eh_admin() to authenticated;
+
+-- =====================================================================
+-- PRIMEIRO ADMINISTRADOR: crie seu usuário em Authentication > Users (Add user)
+-- e depois rode (trocando o e-mail):
+--   update public.perfis set papel = 'admin', limite_downloads = 100000 where email = 'seu@email.com';
+-- =====================================================================

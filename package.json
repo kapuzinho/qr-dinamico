@@ -1,10 +1,29 @@
 {
-  "name": "qr-dinamico",
-  "version": "1.0.0",
+  "name": "kapuzinho-ferramentas-stl",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
-  "description": "QR Code dinâmico com painel (Kapuzinho 3D)",
+  "scripts": {
+    "postinstall": "node scripts/copiar-wasm.cjs",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "build:sem-ofuscar": "vite build --mode semofuscar",
+    "dev:local": "vite --mode semlogin",
+    "build:local": "vite build --mode semlogin --outDir dist-local"
+  },
   "dependencies": {
-    "qrcode-generator": "1.4.4"
+    "jszip": "^3.10.1",
+    "manifold-3d": "^3.5.4",
+    "opentype.js": "^1.3.4",
+    "qrcode": "^1.5.4",
+    "three": "^0.169.0",
+    "three-mesh-bvh": "^0.8.3",
+    "@supabase/supabase-js": "^2.45.4"
+  },
+  "devDependencies": {
+    "@xmldom/xmldom": "^0.9.12",
+    "vite": "^5.4.10",
+    "javascript-obfuscator": "^4.1.1"
   }
 }

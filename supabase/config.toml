@@ -1,0 +1,8 @@
+# Usado pelo Supabase CLI no deploy das funções.
+# verify_jwt = false: o login é conferido DENTRO das funções (no banco), e assim o navegador
+# consegue fazer a checagem de CORS (OPTIONS) sem token.
+[functions.exportar]
+verify_jwt = false
+
+[functions.admin-usuarios]
+verify_jwt = false
