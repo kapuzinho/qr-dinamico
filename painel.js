@@ -97,6 +97,53 @@ function svgQR(texto, { margem = 4, frente = '#000000', fundo = '#ffffff' } = {}
 }
 const pngQR = (texto, o) => new Promise(r => desenharQR(document.createElement('canvas'), texto, o).toBlob(r, 'image/png'));
 
+// ---------------- link do Google Maps → link de avaliação ----------------
+// O link de avaliação usa o Place ID ("ChIJ..."), que é o ID interno do lugar (0x...:0x..., que vem na
+// URL completa do Maps) em base64. Link curto (maps.app.goo.gl) é aberto pelo /api/maps-avaliacao.
+const AVAL_BASE = 'https://search.google.com/local/writereview?placeid=';
+const avalUrl = t => { const m = String(t || '').match(/https?:\/\/[^\s<>"']+/i); return m ? m[0].replace(/[).,;]+$/, '') : String(t || '').trim(); };
+const avalDec = u => { try { return decodeURIComponent(u); } catch { return u; } };
+function avalPlaceId(texto) {
+  const t = avalDec(String(texto || ''));
+  let m = t.match(/(?:placeid|place_id|query_place_id)[=:]\s*(ChIJ[A-Za-z0-9_-]{20,})/i);
+  if (m) return m[1];
+  m = t.match(/!1s(0x[0-9a-f]{1,16}):(0x[0-9a-f]{1,16})/i) || t.match(/ftid=(0x[0-9a-f]{1,16}):(0x[0-9a-f]{1,16})/i);
+  if (m) {
+    const b = [0x0a, 0x12, 0x09], p64 = hex => { let v = BigInt(hex); for (let i = 0; i < 8; i++) { b.push(Number(v & 0xffn)); v >>= 8n; } };
+    p64(m[1]); b.push(0x11); p64(m[2]);
+    return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  m = t.match(/\b(ChIJ[A-Za-z0-9_-]{20,})\b/);
+  return m ? m[1] : null;
+}
+const avalNome = u => { const m = String(u || '').match(/\/maps\/place\/([^/@?]+)/i); return m ? avalDec(m[1].replace(/\+/g, ' ')).trim() : ''; };
+const ehAvaliacao = s => /search\.google\.com\/local\/writereview/i.test(s) || /g\.page\/r\/[^/]+\/review/i.test(s);
+const ehMaps = s => { const u = avalUrl(s); return /^https?:\/\/(maps\.app\.goo\.gl|goo\.gl\/maps|g\.co\/kgs|share\.google)\//i.test(u)
+  || /^https?:\/\/((www|maps)\.)?google\.[a-z.]+\/maps/i.test(u) || /^https?:\/\/maps\.google\.[a-z.]+\//i.test(u) || /[?&](cid|ludocid)=\d/i.test(u); };
+async function mapsParaAvaliacao(texto) {
+  const u = avalUrl(texto);
+  if (ehAvaliacao(u)) return { link: u, nome: '' };
+  const id = avalPlaceId(u);
+  if (id) return { link: AVAL_BASE + id, placeId: id, nome: avalNome(u) };
+  if (!ehMaps(u)) throw new Error('Isso não parece um link do Google Maps.');
+  let d = null;
+  try { const r = await fetch('/api/maps-avaliacao?url=' + encodeURIComponent(u)); if (/json/.test(r.headers.get('content-type') || '')) d = await r.json(); } catch {}
+  if (d?.link) return d;
+  throw new Error((d?.erro || 'Não consegui abrir o link do Maps.') + ' Abra o link no navegador, copie o endereço completo da barra e cole aqui.');
+}
+// botão pros campos de destino: troca o link do Maps que está no campo pelo de avaliação
+function botaoMapsAval(destino) {
+  return h('button', { class: 'btn mini', type: 'button', text: 'Link do Maps → avaliação', title: 'Cole o link do Google Maps da loja no destino e clique aqui', onclick: async e => {
+    const b = e.currentTarget, v = destino.value.trim();
+    if (!v) return aviso('Cole primeiro o link do Google Maps da loja no campo de destino.', true);
+    if (ehAvaliacao(v)) return aviso('Esse já é um link de avaliação.');
+    b.disabled = true; const t = b.textContent; b.textContent = 'Convertendo…';
+    try { const r = await mapsParaAvaliacao(v); destino.value = r.link; aviso('Pronto: link de avaliação' + (r.nome ? ' de ' + r.nome : '') + '. Teste no celular.'); }
+    catch (x) { aviso(x.message, true); }
+    finally { b.disabled = false; b.textContent = t; }
+  } });
+}
+
 // ---------------- dados ----------------
 // Mesma interface nos dois modos. Cliente: só os próprios links (as regras de verdade ficam no banco).
 function dadosDemo() {
@@ -428,7 +475,7 @@ function montarPainel(sessao) {
       h('div', { class: 'acoes' }, acoes)),
     DEMO ? h('div', { class: 'demo', text: ADMIN ? 'Modo demonstração (admin): os dados ficam só neste navegador e o link curto não redireciona de verdade (use "Simular leitura"). Preencha o config.js com o Supabase pra usar pra valer.'
       : 'Modo demonstração (página do cliente "Pizzaria Bella"): os dados ficam só neste navegador. Preencha o config.js com o Supabase pra usar pra valer.' }) : null,
-    h('nav', { class: 'nav-vistas' }, h('button', { 'data-v': 'qr', text: 'QR Codes', onclick: () => trocarVista('qr') }), h('button', { 'data-v': 'pix', text: 'Pix', onclick: () => trocarVista('pix') })),
+    h('nav', { class: 'nav-vistas' }, h('button', { 'data-v': 'qr', text: 'QR Codes', onclick: () => trocarVista('qr') }), h('button', { 'data-v': 'pix', text: 'Pix', onclick: () => trocarVista('pix') }), h('button', { 'data-v': 'avaliacao', text: 'Link de avaliação', onclick: () => trocarVista('avaliacao') })),
     h('main', { id: 'conteudo' }),
   );
   trocarVista(VISTA);
@@ -580,6 +627,7 @@ function abaDados(l, corpo, rodape, ctx) {
     h('div', { class: 'duas' }, campo('Cliente (texto)', cliente), campo('Telefone do cliente', tel)),
     campo('Link de destino', destino, 'Pode trocar quando quiser: o QR impresso continua o mesmo.'),
     h('div', { class: 'rapidos', style: 'margin:-6px 0 14px' }, h('button', { class: 'btn mini', type: 'button', text: 'Montar link do WhatsApp', onclick: () => { ajudaW.hidden = !ajudaW.hidden; } }),
+      botaoMapsAval(destino),
       h('button', { class: 'btn mini', type: 'button', text: 'Testar destino', onclick: () => { const u = normUrl(destino.value); if (urlValida(u)) window.open(u, '_blank', 'noopener'); else aviso('Link inválido.', true); } })),
     ajudaW,
     campo('Válido até', validade, 'Depois dessa data o QR para de redirecionar (vale até o fim do dia).'),
@@ -637,6 +685,7 @@ function ajudanteWpp(destino) {
 }
 function botoesDestino(destino, ajudaW) {
   return h('div', { class: 'rapidos', style: 'margin:-6px 0 14px' }, h('button', { class: 'btn mini', type: 'button', text: 'Montar link do WhatsApp', onclick: () => { ajudaW.hidden = !ajudaW.hidden; } }),
+    botaoMapsAval(destino),
     h('button', { class: 'btn mini', type: 'button', text: 'Testar destino', onclick: () => { const u = normUrl(destino.value); if (urlValida(u)) window.open(u, '_blank', 'noopener'); else aviso('Link inválido.', true); } }));
 }
 
@@ -690,6 +739,70 @@ function abaDadosCliente(l, corpo, rodape, ctx) {
     if (r === 'ok') { aviso('Leitura registrada, abrindo o destino…'); window.open(l.destino, '_blank', 'noopener'); } else aviso('Leitura registrada: ' + ROTULO[r], true);
   } }));
   nome.focus();
+}
+
+// ---------------- aba "Link de avaliação" ----------------
+// Cola o link do Google Maps da loja → sai o link que abre direto as estrelas, com QR pra baixar
+// e um atalho pra criar um QR dinâmico já apontando pra ele.
+function desenharAvaliacao(m) {
+  const entrada = h('textarea', { placeholder: 'Ex.: https://maps.app.goo.gl/... (ou o texto inteiro que o Maps copia: "Nome da loja · Cidade https://...")', rows: 3 });
+  const erro = h('p', { class: 'erro-msg' });
+  const res = h('div', { class: 'aval-res', hidden: true });
+  const btn = h('button', { class: 'btn primario', type: 'button', text: 'Gerar link de avaliação' });
+  const gerar = async () => {
+    erro.textContent = ''; res.hidden = true;
+    const v = entrada.value.trim();
+    if (!v) return (erro.textContent = 'Cole o link do Google Maps da loja.');
+    btn.disabled = true; btn.textContent = 'Gerando…';
+    try { mostrarAval(await mapsParaAvaliacao(v)); }
+    catch (x) { erro.textContent = x.message; }
+    finally { btn.disabled = false; btn.textContent = 'Gerar link de avaliação'; }
+  };
+  btn.onclick = gerar;
+  entrada.addEventListener('paste', () => setTimeout(gerar, 0));
+  entrada.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); gerar(); } });
+
+  function mostrarAval(r) {
+    const cv = h('canvas');
+    const frente = h('input', { type: 'color', value: '#000000' }), fundo = h('input', { type: 'color', value: '#ffffff' });
+    const op = () => ({ tam: 1024, margem: 4, frente: frente.value, fundo: fundo.value });
+    const redesenhar = () => desenharQR(cv, r.link, { ...op(), tam: 480 });
+    [frente, fundo].forEach(i => i.addEventListener('input', redesenhar));
+    const nomeArq = 'Avaliacao-' + nomeArquivo(r.nome || 'loja');
+    rep(res,
+      h('div', { class: 'aval-grade' },
+        h('div', { class: 'qr-area' }, cv, h('div', { class: 'cores' }, h('label', {}, 'Cor ', frente), h('label', {}, 'Fundo ', fundo))),
+        h('div', {},
+          r.nome ? h('h3', { class: 'aval-nome', text: r.nome }) : null,
+          h('div', { class: 'link-curto aval-link', text: r.link }),
+          h('div', { class: 'rapidos', style: 'margin:12px 0' },
+            h('button', { class: 'btn primario', type: 'button', text: 'Copiar link', onclick: () => copiar(r.link) }),
+            h('button', { class: 'btn', type: 'button', text: 'Testar (abrir)', onclick: () => window.open(r.link, '_blank', 'noopener') }),
+            h('button', { class: 'btn', type: 'button', text: 'Baixar QR (PNG)', onclick: async () => baixar(await pngQR(r.link, op()), nomeArq + '.png') }),
+            h('button', { class: 'btn', type: 'button', text: 'Baixar QR (SVG)', onclick: () => baixar(new Blob([svgQR(r.link, op())], { type: 'image/svg+xml' }), nomeArq + '.svg') })),
+          h('div', { class: 'caixa-info' },
+            h('b', { text: 'Dica: ' }), 'use esse link como destino de um QR dinâmico. Assim a placa impressa leva pro link curto e, se a loja mudar, você troca o destino sem reimprimir. Grave o mesmo link na tag NFC.',
+            h('div', { style: 'margin-top:10px' }, h('button', { class: 'btn primario', type: 'button', text: '+ Criar QR dinâmico com esse link', onclick: () => criarQRcomDestino(r.link, r.nome) }))),
+          h('div', { class: 'caixa-info alerta', text: 'Antes de imprimir, abra o link no celular e confira se aparece a tela de estrelas da loja certa.' }))));
+    redesenhar();
+    res.hidden = false;
+  }
+
+  rep(m, h('section', { class: 'bloco aval' },
+    h('div', { class: 'bloco-topo' }, h('h2', { text: 'Link de avaliação do Google' })),
+    h('div', { class: 'aval-corpo' },
+      h('p', { class: 'sub', text: 'No Google Maps, abra a loja → Compartilhar → Copiar link. Cole aqui: sai o link que abre direto a tela de avaliação (as estrelas), com o QR pronto.' }),
+      campo('Link do Google Maps da loja', entrada), erro, btn, res)));
+  entrada.focus();
+}
+function criarQRcomDestino(link, nome) {
+  if (ADMIN) abrirLink(null); else novoDoCliente();
+  setTimeout(() => {
+    const lat = document.querySelector('.lateral .lat-corpo'); if (!lat) return;
+    const nomeI = lat.querySelector('input'), dest = lat.querySelector('input[inputmode=url]');
+    if (nomeI && !nomeI.value) nomeI.value = nome ? 'Avaliação Google - ' + nome : 'Avaliação Google';
+    if (dest) dest.value = link;
+  }, 0);
 }
 
 function preencherDuplicado(l) {
@@ -797,6 +910,7 @@ function trocarVista(v) {
   document.querySelectorAll('.so-qr').forEach(e => { e.hidden = v !== 'qr'; });
   const m = document.getElementById('conteudo'); if (!m) return;
   if (v === 'qr') { rep(m, ADMIN ? null : h('div', { id: 'plano' }), h('section', { class: 'cards' + (ADMIN ? '' : ' tres'), id: 'cards' }), barraBusca(), h('section', { class: 'lista', id: 'lista' })); recarregar(); }
+  else if (v === 'avaliacao') desenharAvaliacao(m);
   else { rep(m, h('div', { id: 'pixArea' }, h('p', { class: 'sub', text: 'Carregando…' }))); carregarPix(); }
 }
 

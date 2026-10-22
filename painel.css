@@ -244,3 +244,11 @@ h3 { font-size: 14px; margin: 14px 0 8px; color: #3d4c54; }
   .lista-simples .item > :nth-child(2):not(.item-meio) { grid-column: 1 / -1; }
   .qr-duplo { grid-template-columns: 1fr; }
 }
+/* ---------- link de avaliação ---------- */
+.aval-corpo { padding: 16px; }
+.aval-corpo > .sub { margin: 0 0 14px; }
+.aval-res { margin-top: 18px; border-top: 1px solid var(--linha); padding-top: 18px; }
+.aval-grade { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; align-items: start; }
+.aval-nome { margin: 0 0 8px; font-size: 18px; }
+.aval-link { text-align: left; font-size: 13px; }
+@media (max-width: 700px) { .aval-grade { grid-template-columns: 1fr; } }
