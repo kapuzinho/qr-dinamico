@@ -41,6 +41,9 @@ jobs:
         run: |
           curl -s --max-time 30 "$SITE/api/saude" || true
 
-      # O GitHub desliga agendamentos de repositório parado há 60 dias; isto evita (sem criar commit).
+      # O GitHub desliga agendamentos de repositório parado há 60 dias; isto reativa (sem criar commit).
       - name: Manter o agendamento ligado
-        uses: gautamkrishnar/keepalive-workflow@v2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/manter-supabase-acordado.yml/enable" || true
