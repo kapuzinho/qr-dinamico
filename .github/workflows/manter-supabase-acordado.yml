@@ -1,4 +1,4 @@
-# Mantém o Supabase do QR Code + Pix acordado.
+# Mantém acordados os 3 Supabase: QR Code + Pix, GestorPrint e Rota do Churrasco.
 # O plano grátis do Supabase pausa o projeto depois de 7 dias sem uso.
 # Isto roda sozinho no GitHub a cada 2 dias (mesmo com o PC desligado) e faz uma
 # consulta de verdade no banco, que conta como uso.
@@ -21,6 +21,12 @@ jobs:
       SUPABASE_URL: https://xraoqlwewywwazvffrbu.supabase.co
       SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhyYW9xbHdld3l3d2F6dmZmcmJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1NDkwNDcsImV4cCI6MjEwNzEyNTA0N30.j1yqsbW35T80_dDlocVUqJve2Ns6GyMjbwPl8P8oJOg
       SITE: https://kpu-nine.vercel.app
+      # GestorPrint (outra conta Supabase) - chave anon pública, a mesma que vai no site
+      GP_URL: https://yyckciubmnzznqiulrcj.supabase.co
+      GP_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl5Y2tjaXVibW56em5xaXVscmNqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyMzkxOTUsImV4cCI6MjEwNjgxNTE5NX0.Woy5pmgPZOUeQtvM3_ddLB-DLBIEitHCpaZZWnUcFh8
+      # Rota do Churrasco - mesma chave anon pública do config.js do site
+      RT_URL: https://tdyyvzjwcawfcjbaeklk.supabase.co
+      RT_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkeXl2emp3Y2F3ZmNqYmFla2xrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk3NDk3MTksImV4cCI6MjEwNTMyNTcxOX0.5eiilNf3luSToiTjKL6xPOuWR57zfsbFs6ra-W8-o_0
     steps:
       - name: Consulta no banco (QR)
         run: |
@@ -36,6 +42,20 @@ jobs:
             -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
             -H 'Content-Type: application/json' -d '{"p_slug":"teste-saude"}')
           echo "Supabase respondeu $code: $(head -c 300 resp.txt)"
+
+      - name: Consulta no banco (GestorPrint)
+        run: |
+          code=$(curl -s -o resp.txt -w '%{http_code}' "$GP_URL/rest/v1/config?select=*&limit=1" \
+            -H "apikey: $GP_KEY" -H "Authorization: Bearer $GP_KEY")
+          echo "GestorPrint respondeu $code: $(head -c 300 resp.txt)"
+          [ "$code" -lt 500 ] || exit 1
+
+      - name: Consulta no banco (Rota do Churrasco)
+        run: |
+          code=$(curl -s -o resp.txt -w '%{http_code}' "$RT_URL/rest/v1/pratos?select=id&limit=1" \
+            -H "apikey: $RT_KEY" -H "Authorization: Bearer $RT_KEY")
+          echo "Rota do Churrasco respondeu $code: $(head -c 300 resp.txt)"
+          [ "$code" -lt 500 ] || exit 1
 
       - name: Abre o site (Vercel -> Supabase)
         run: |
