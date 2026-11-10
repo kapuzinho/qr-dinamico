@@ -1,0 +1,46 @@
+# Mantém o Supabase do QR Code + Pix acordado.
+# O plano grátis do Supabase pausa o projeto depois de 7 dias sem uso.
+# Isto roda sozinho no GitHub a cada 2 dias (mesmo com o PC desligado) e faz uma
+# consulta de verdade no banco, que conta como uso.
+# Dá pra rodar na mão em: GitHub > Actions > "Manter Supabase acordado" > Run workflow.
+name: Manter Supabase acordado
+
+on:
+  schedule:
+    - cron: '17 12 */2 * *'   # a cada 2 dias, 09:17 de Brasília
+  workflow_dispatch:
+
+permissions:
+  actions: write      # pro keepalive abaixo reativar o agendamento sozinho
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    env:
+      # mesma URL e chave anon pública que já estão no config.js
+      SUPABASE_URL: https://xraoqlwewywwazvffrbu.supabase.co
+      SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhyYW9xbHdld3l3d2F6dmZmcmJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1NDkwNDcsImV4cCI6MjEwNzEyNTA0N30.j1yqsbW35T80_dDlocVUqJve2Ns6GyMjbwPl8P8oJOg
+      SITE: https://kpu-nine.vercel.app
+    steps:
+      - name: Consulta no banco (QR)
+        run: |
+          code=$(curl -s -o resp.txt -w '%{http_code}' -X POST "$SUPABASE_URL/rest/v1/rpc/qr_abrir" \
+            -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H 'Content-Type: application/json' -d '{"p_codigo":"teste-saude","p_contar":false}')
+          echo "Supabase respondeu $code: $(head -c 300 resp.txt)"
+          [ "$code" -lt 500 ] || exit 1
+
+      - name: Consulta no banco (Pix)
+        run: |
+          code=$(curl -s -o resp.txt -w '%{http_code}' -X POST "$SUPABASE_URL/rest/v1/rpc/pix_slug_livre" \
+            -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H 'Content-Type: application/json' -d '{"p_slug":"teste-saude"}')
+          echo "Supabase respondeu $code: $(head -c 300 resp.txt)"
+
+      - name: Abre o site (Vercel -> Supabase)
+        run: |
+          curl -s --max-time 30 "$SITE/api/saude" || true
+
+      # O GitHub desliga agendamentos de repositório parado há 60 dias; isto evita (sem criar commit).
+      - name: Manter o agendamento ligado
+        uses: gautamkrishnar/keepalive-workflow@v2
